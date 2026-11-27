@@ -1,8 +1,10 @@
 import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
-import { AudioLines, Home, Moon, Plus, Settings, Sun } from 'lucide-react';
+import { Home, Moon, Plus, Settings, Sun } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { HomeView } from './components/HomeView';
+import { LandingPage } from './components/LandingPage';
+import { LegalPage } from './components/LegalPage';
 import { SettingsAndCloneView } from './components/SettingsAndCloneView';
 import { StudioAudioPlayer } from './components/StudioAudioPlayer';
 import { TtsStudioView } from './components/TtsStudioView';
@@ -138,12 +140,23 @@ function MobileStudioApp() {
       {/* Compact Mobile-First Sticky Top App Bar (56px) */}
       <header className="sticky top-0 z-30 h-14 w-full bg-white/90 dark:bg-slate-900/90 backdrop-blur-md border-b border-slate-200 dark:border-slate-800">
         <div className="max-w-6xl mx-auto h-full px-4 sm:px-6 flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2 whitespace-nowrap shrink-0">
-            <AudioLines className="w-5 h-5 text-blue-600 dark:text-blue-400" />
-            <span className="font-display text-base font-bold tracking-tight">
-              VoiceCraft
+          <a
+            href="/"
+            className="inline-flex items-center whitespace-nowrap shrink-0 rounded-xl"
+            title="VoiceCraft Home"
+            aria-label="VoiceCraft Home"
+          >
+            <span className="inline-flex items-center justify-center dark:bg-white/95 rounded-lg dark:px-2 py-0.5 transition-colors">
+              <img
+                src="/assets/aistudio/file_00000000f3808211bcfd7bd5316f31f5_6f37ae42.png"
+                alt="VoiceCraft"
+                width={54}
+                height={36}
+                referrerPolicy="no-referrer"
+                className="h-8 w-auto object-contain"
+              />
             </span>
-          </div>
+          </a>
 
           <span className="text-sm font-semibold text-slate-700 dark:text-slate-300 truncate">
             {tabTitle}
@@ -281,9 +294,38 @@ function MobileStudioApp() {
 }
 
 export default function App() {
+  const pathname =
+    typeof window !== 'undefined'
+      ? window.location.pathname.replace(/\/+$/, '') || '/'
+      : '/';
+
+  const isStudioApp = pathname === '/app' || pathname.startsWith('/app/');
+  const isPrivacy = pathname === '/privacy' || pathname === '/privacy-policy';
+  const isTerms = pathname === '/terms' || pathname === '/terms-of-service';
+
+  useEffect(() => {
+    if (isStudioApp) {
+      document.title = 'VoiceCraft Studio — AI Voice Generator App';
+    } else if (isPrivacy) {
+      document.title = 'Privacy Policy — VoiceCraft';
+    } else if (isTerms) {
+      document.title = 'Terms of Service — VoiceCraft';
+    } else {
+      document.title = 'VoiceCraft – AI Voice Generator | Convert Text to Speech Online';
+    }
+  }, [isStudioApp, isPrivacy, isTerms]);
+
   return (
     <ErrorBoundary>
-      <MobileStudioApp />
+      {isStudioApp ? (
+        <MobileStudioApp />
+      ) : isPrivacy ? (
+        <LegalPage type="privacy" />
+      ) : isTerms ? (
+        <LegalPage type="terms" />
+      ) : (
+        <LandingPage />
+      )}
     </ErrorBoundary>
   );
 }

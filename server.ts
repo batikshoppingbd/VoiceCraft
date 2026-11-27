@@ -1,5 +1,4 @@
 import 'dotenv/config';
-import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import express, { NextFunction, Request, Response } from 'express';
@@ -7,11 +6,14 @@ import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
 import { encodePcmToMp3, parseWavBuffer } from './server/audioProcessor.js';
 import {
-  analyzeVoiceSample,
-  BaseVoiceName,
-  SupportedLanguage,
-  synthesizeClonedSpeech,
-} from './server/geminiVoiceEngine.js';
+  handleAnalyzeVoiceRequest,
+  handleGenerateTtsRequest,
+  handlePreviewVoiceRequest,
+  HttpError,
+  resolveSafeUserFile,
+  SAFE_ID_REGEX,
+  validateWorkspaceClientId,
+} from './server/studioHandlers.js';
 
 const PORT = Number(process.env.PORT || 3000);
 const ROOT_DIR = process.cwd();
@@ -22,29 +24,6 @@ fs.mkdirSync(STORAGE_ROOT, { recursive: true });
 
 interface WorkspaceRequest extends Request {
   uid?: string;
-}
-
-const SAFE_ID_REGEX = /^[a-zA-Z0-9_\-]+$/;
-const SAFE_FILENAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
-
-function resolveSafeUserFile(
-  uid: string,
-  category: 'samples' | 'generated',
-  fileName: string
-): string {
-  if (!SAFE_ID_REGEX.test(uid) || uid.length < 12) {
-    throw new Error('Invalid workspace identifier.');
-  }
-  if (!SAFE_FILENAME_REGEX.test(fileName)) {
-    throw new Error('Invalid audio identifier.');
-  }
-  const userCategoryDir = path.resolve(STORAGE_ROOT, uid, category);
-  fs.mkdirSync(userCategoryDir, { recursive: true });
-  const targetPath = path.resolve(userCategoryDir, fileName);
-  if (!targetPath.startsWith(userCategoryDir + path.sep)) {
-    throw new Error('Path traversal rejected.');
-  }
-  return targetPath;
 }
 
 function findExistingUserAudioFile(
@@ -72,19 +51,20 @@ function requireWorkspaceClient(
   res: Response,
   next: NextFunction
 ): void {
-  const clientId = String(req.headers['x-studio-client-id'] || '').trim();
-  if (!clientId || clientId.length < 12 || clientId.length > 128 || !SAFE_ID_REGEX.test(clientId)) {
-    res.status(400).json({ error: 'Valid workspace identifier is required.' });
-    return;
+  try {
+    req.uid = validateWorkspaceClientId(req.headers['x-studio-client-id']);
+    next();
+  } catch (err) {
+    const status = err instanceof HttpError ? err.status : 400;
+    const message = err instanceof Error ? err.message : 'Valid workspace identifier is required.';
+    res.status(status).json({ error: message });
   }
-  req.uid = clientId;
-  next();
 }
 
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 25 * 1024 * 1024, // 25MB max
+    fileSize: 4 * 1024 * 1024 + 256 * 1024, // ~4.25 MB safe for serverless & local
   },
   fileFilter: (_req, file, cb) => {
     const allowedExts = ['.mp3', '.wav', '.m4a', '.webm', '.ogg'];
@@ -101,30 +81,6 @@ const upload = multer({
   },
 });
 
-function inferExtension(mimeType: string, originalName: string): string {
-  const ext = path.extname(originalName || '').toLowerCase().replace('.', '');
-  if (['mp3', 'wav', 'm4a', 'webm', 'ogg'].includes(ext)) return ext;
-  if (mimeType.includes('wav')) return 'wav';
-  if (mimeType.includes('mpeg') || mimeType.includes('mp3')) return 'mp3';
-  if (mimeType.includes('mp4') || mimeType.includes('m4a')) return 'm4a';
-  if (mimeType.includes('webm')) return 'webm';
-  return 'wav';
-}
-
-function isValidLanguage(val: unknown): val is SupportedLanguage {
-  return val === 'en' || val === 'bn' || val === 'bilingual';
-}
-
-function isValidBaseVoice(val: unknown): val is BaseVoiceName {
-  return (
-    val === 'Puck' ||
-    val === 'Charon' ||
-    val === 'Kore' ||
-    val === 'Fenrir' ||
-    val === 'Zephyr'
-  );
-}
-
 async function startServer() {
   const app = express();
   app.use(express.json({ limit: '2mb' }));
@@ -140,89 +96,18 @@ async function startServer() {
     upload.single('audio'),
     async (req: WorkspaceRequest, res: Response) => {
       try {
-        const uid = req.uid!;
-        const file = req.file;
-        if (!file || file.buffer.length < 1024) {
-          res.status(400).json({
-            error: 'Please record or upload a clear voice sample (at least 2 seconds of speech).',
-          });
-          return;
-        }
-
-        const ownershipAccepted = req.body.ownershipAccepted === 'true';
-        const consentStatement = String(req.body.consentStatement || '').trim();
-        if (!ownershipAccepted || consentStatement.length < 10) {
-          res.status(400).json({
-            error:
-              'Voice ownership verification is required. Confirm that this is your own voice or that you hold explicit permission.',
-          });
-          return;
-        }
-
-        const declaredLanguage: SupportedLanguage = isValidLanguage(req.body.language)
-          ? req.body.language
-          : 'en';
-        const customName = String(req.body.voiceName || '').trim().slice(0, 80);
-
-        const sampleAudioId = `smp_${crypto.randomUUID().replace(/-/g, '')}`;
-        const ext = inferExtension(file.mimetype, file.originalname);
-        const samplePath = resolveSafeUserFile(uid, 'samples', `${sampleAudioId}.${ext}`);
-        fs.writeFileSync(samplePath, file.buffer);
-
-        const analysis = await analyzeVoiceSample({
-          audioBuffer: file.buffer,
-          mimeType: file.mimetype,
-          fileName: file.originalname,
-          declaredLanguage,
-          consentPhrase: consentStatement,
+        const result = await handleAnalyzeVoiceRequest({
+          uid: req.uid!,
+          file: req.file,
+          body: (req.body || {}) as Record<string, unknown>,
         });
-
-        if (!analysis.voiceDetected) {
-          // Delete invalid sample
-          if (fs.existsSync(samplePath)) fs.unlinkSync(samplePath);
-          res.status(422).json({
-            error:
-              analysis.rejectionReason ||
-              'No clear human speech was detected in this recording. Please record in a quiet environment.',
-          });
-          return;
-        }
-
-        // Synthesize an immediate cloned voice preview clip so the user can audition their clone
-        const previewAudioId = `prv_${crypto.randomUUID().replace(/-/g, '')}`;
-        const previewText =
-          declaredLanguage === 'bn'
-            ? `হ্যালো, এটি আমার ব্যক্তিগত এআই ভয়েস প্রোফাইল${customName ? ` "${customName}"` : ''}। ভয়েস ক্লোনিং সফলভাবে সম্পন্ন হয়েছে।`
-            : declaredLanguage === 'bilingual'
-            ? `Hello! This is my cloned personal voice${customName ? ` "${customName}"` : ''}. আমি বাংলা এবং ইংরেজি দুই ভাষাতেই স্বাভাবিকভাবে কথা বলতে পারি।`
-            : `Hello! This is my personal cloned voice profile${customName ? ` "${customName}"` : ''}. Voice analysis and neural synthesis calibration are complete.`;
-
-        const previewSynthesis = await synthesizeClonedSpeech({
-          text: previewText,
-          language: declaredLanguage,
-          baseVoiceName: analysis.baseVoiceName,
-          voiceStylePrompt: analysis.voiceStylePrompt,
-          speed: analysis.suggestedSpeed,
-          pitch: analysis.suggestedPitch,
-          includeMp3: false,
-        });
-
-        const previewPath = resolveSafeUserFile(uid, 'generated', `${previewAudioId}.wav`);
-        fs.writeFileSync(previewPath, previewSynthesis.wavBuffer);
-
-        res.json({
-          sampleAudioId,
-          sampleMimeType: file.mimetype || `audio/${ext}`,
-          previewAudioId,
-          previewDurationSec: previewSynthesis.durationSec,
-          previewWaveformPeaks: previewSynthesis.waveformPeaks,
-          analysis,
-        });
+        res.json(result);
       } catch (err) {
         console.error('Voice analysis error:', err);
+        const status = err instanceof HttpError ? err.status : 500;
         const message =
           err instanceof Error ? err.message : 'Failed to analyze voice sample.';
-        res.status(500).json({ error: message });
+        res.status(status).json({ error: message });
       }
     }
   );
@@ -233,46 +118,15 @@ async function startServer() {
     requireWorkspaceClient,
     async (req: WorkspaceRequest, res: Response) => {
       try {
-        const uid = req.uid!;
-        const { voiceName, language, baseVoiceName, voiceStylePrompt, speed, pitch } = req.body;
-
-        if (!isValidBaseVoice(baseVoiceName) || typeof voiceStylePrompt !== 'string') {
-          res.status(400).json({ error: 'Invalid voice profile parameters.' });
-          return;
-        }
-
-        const lang: SupportedLanguage = isValidLanguage(language) ? language : 'en';
-        const safeName = String(voiceName || 'My Voice').trim().slice(0, 80);
-        const previewText =
-          lang === 'bn'
-            ? `নমস্কার ও সালাম! আমি ${safeName}। আপনার যেকোনো বাংলা লেখা এখন আমার কণ্ঠে শুনতে পারবেন।`
-            : lang === 'bilingual'
-            ? `Hi, I am ${safeName}. আমি বাংলা এবং ইংরেজি উভয় ভাষাতেই স্পষ্টভাবে কথা বলতে পারি।`
-            : `Hi, I am ${safeName}. Ready to convert your scripts into natural, studio-grade speech.`;
-
-        const result = await synthesizeClonedSpeech({
-          text: previewText,
-          language: lang,
-          baseVoiceName,
-          voiceStylePrompt: voiceStylePrompt.slice(0, 1500),
-          speed: Number(speed) || 1.0,
-          pitch: Number(pitch) || 0,
-          includeMp3: false,
+        const result = await handlePreviewVoiceRequest({
+          uid: req.uid!,
+          body: (req.body || {}) as Record<string, unknown>,
         });
-
-        const previewAudioId = `prv_${crypto.randomUUID().replace(/-/g, '')}`;
-        const previewPath = resolveSafeUserFile(uid, 'generated', `${previewAudioId}.wav`);
-        fs.writeFileSync(previewPath, result.wavBuffer);
-
-        res.json({
-          previewAudioId,
-          durationSec: result.durationSec,
-          waveformPeaks: result.waveformPeaks,
-          fileSizeBytes: result.wavBuffer.length,
-        });
+        res.json(result);
       } catch (err) {
         console.error('Voice preview error:', err);
-        res.status(500).json({
+        const status = err instanceof HttpError ? err.status : 500;
+        res.status(status).json({
           error: err instanceof Error ? err.message : 'Failed to generate voice preview.',
         });
       }
@@ -285,73 +139,15 @@ async function startServer() {
     requireWorkspaceClient,
     async (req: WorkspaceRequest, res: Response) => {
       try {
-        const uid = req.uid!;
-        const {
-          text,
-          language,
-          baseVoiceName,
-          voiceStylePrompt,
-          speed,
-          pitch,
-          styleOverride,
-          format,
-        } = req.body;
-
-        const cleanText = typeof text === 'string' ? text.trim() : '';
-        if (!cleanText || cleanText.length > 5000) {
-          res.status(400).json({
-            error: 'Please enter between 1 and 5,000 characters of text to synthesize.',
-          });
-          return;
-        }
-        if (!isValidBaseVoice(baseVoiceName) || typeof voiceStylePrompt !== 'string') {
-          res.status(400).json({ error: 'Selected voice profile is invalid.' });
-          return;
-        }
-
-        const lang: SupportedLanguage = isValidLanguage(language) ? language : 'en';
-        const targetFormat = format === 'mp3' ? 'mp3' : 'wav';
-        const safeSpeed = Math.max(0.5, Math.min(2.0, Number(speed) || 1.0));
-        const safePitch = Math.max(-6, Math.min(6, Number(pitch) || 0));
-
-        const result = await synthesizeClonedSpeech({
-          text: cleanText,
-          language: lang,
-          baseVoiceName,
-          voiceStylePrompt: voiceStylePrompt.slice(0, 1500),
-          speed: safeSpeed,
-          pitch: safePitch,
-          styleOverride: typeof styleOverride === 'string' ? styleOverride.slice(0, 300) : undefined,
-          includeMp3: true,
+        const result = await handleGenerateTtsRequest({
+          uid: req.uid!,
+          body: (req.body || {}) as Record<string, unknown>,
         });
-
-        const serverAudioId = `tts_${crypto.randomUUID().replace(/-/g, '')}`;
-        // Store canonical WAV for lossless playback and instant WAV/MP3 export
-        const wavPath = resolveSafeUserFile(uid, 'generated', `${serverAudioId}.wav`);
-        fs.writeFileSync(wavPath, result.wavBuffer);
-
-        if (result.mp3Buffer) {
-          const mp3Path = resolveSafeUserFile(uid, 'generated', `${serverAudioId}.mp3`);
-          fs.writeFileSync(mp3Path, result.mp3Buffer);
-        }
-
-        const primarySize =
-          targetFormat === 'mp3' && result.mp3Buffer
-            ? result.mp3Buffer.length
-            : result.wavBuffer.length;
-
-        res.json({
-          serverAudioId,
-          durationSec: result.durationSec,
-          format: targetFormat,
-          fileSizeBytes: primarySize,
-          wavSizeBytes: result.wavBuffer.length,
-          mp3SizeBytes: result.mp3Buffer?.length || primarySize,
-          waveformPeaks: result.waveformPeaks,
-        });
+        res.json(result);
       } catch (err) {
         console.error('TTS generation error:', err);
-        res.status(500).json({
+        const status = err instanceof HttpError ? err.status : 500;
+        res.status(status).json({
           error: err instanceof Error ? err.message : 'Speech synthesis failed.',
         });
       }

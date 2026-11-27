@@ -1,3 +1,9 @@
+import {
+  base64ToBlob,
+  deleteAudioBlobFromCache,
+  resolveCachedAudio,
+  saveAudioBlobToCache,
+} from './audioCache';
 import { getWorkspaceId } from './firebase';
 import type {
   AudioFormat,
@@ -11,6 +17,7 @@ export interface AnalyzeVoiceResponse {
   previewAudioId: string;
   previewDurationSec: number;
   previewWaveformPeaks: number[];
+  previewWavBase64?: string;
   analysis: {
     voiceDetected: boolean;
     transcript: string;
@@ -35,6 +42,8 @@ export interface GenerateTtsResponse {
   wavSizeBytes: number;
   mp3SizeBytes: number;
   waveformPeaks: number[];
+  wavBase64?: string;
+  mp3Base64?: string;
 }
 
 function extractFriendlyErrorMessage(rawMessage: string, status: number): string {
@@ -54,6 +63,12 @@ function extractFriendlyErrorMessage(rawMessage: string, status: number): string
 }
 
 async function parseJsonResponse<T>(res: Response): Promise<T> {
+  if (res.status === 413) {
+    throw new Error(
+      'Audio sample is too large (max 4 MB). Please record 6–30s with the microphone or upload a smaller MP3/M4A file.'
+    );
+  }
+
   const rawText = await res.text();
   const contentType = (res.headers.get('content-type') || '').toLowerCase();
   const looksLikeHtml =
@@ -125,7 +140,16 @@ export async function apiAnalyzeVoiceSample(params: {
     body: formData,
   });
 
-  return parseJsonResponse<AnalyzeVoiceResponse>(res);
+  const data = await parseJsonResponse<AnalyzeVoiceResponse>(res);
+  const ext = (params.fileName.split('.').pop() || 'webm').toLowerCase();
+  await saveAudioBlobToCache('samples', data.sampleAudioId, ext, params.audioBlob);
+
+  if (data.previewWavBase64) {
+    const previewBlob = base64ToBlob(data.previewWavBase64, 'audio/wav');
+    await saveAudioBlobToCache('generated', data.previewAudioId, 'wav', previewBlob);
+  }
+
+  return data;
 }
 
 export async function apiGenerateVoicePreview(params: {
@@ -140,6 +164,7 @@ export async function apiGenerateVoicePreview(params: {
   durationSec: number;
   waveformPeaks: number[];
   fileSizeBytes: number;
+  previewWavBase64?: string;
 }> {
   const res = await fetch('/api/voices/preview', {
     method: 'POST',
@@ -149,7 +174,20 @@ export async function apiGenerateVoicePreview(params: {
     },
     body: JSON.stringify(params),
   });
-  return parseJsonResponse(res);
+  const data = await parseJsonResponse<{
+    previewAudioId: string;
+    durationSec: number;
+    waveformPeaks: number[];
+    fileSizeBytes: number;
+    previewWavBase64?: string;
+  }>(res);
+
+  if (data.previewWavBase64) {
+    const previewBlob = base64ToBlob(data.previewWavBase64, 'audio/wav');
+    await saveAudioBlobToCache('generated', data.previewAudioId, 'wav', previewBlob);
+  }
+
+  return data;
 }
 
 export async function apiGenerateTts(params: {
@@ -170,7 +208,18 @@ export async function apiGenerateTts(params: {
     },
     body: JSON.stringify(params),
   });
-  return parseJsonResponse<GenerateTtsResponse>(res);
+  const data = await parseJsonResponse<GenerateTtsResponse>(res);
+
+  if (data.wavBase64) {
+    const wavBlob = base64ToBlob(data.wavBase64, 'audio/wav');
+    await saveAudioBlobToCache('generated', data.serverAudioId, 'wav', wavBlob);
+  }
+  if (data.mp3Base64) {
+    const mp3Blob = base64ToBlob(data.mp3Base64, 'audio/mpeg');
+    await saveAudioBlobToCache('generated', data.serverAudioId, 'mp3', mp3Blob);
+  }
+
+  return data;
 }
 
 export async function fetchAuthorizedAudioBlob(
@@ -178,6 +227,13 @@ export async function fetchAuthorizedAudioBlob(
   audioId: string,
   format?: AudioFormat
 ): Promise<Blob> {
+  // 1. Always check browser IndexedDB first (works on Vercel serverless & offline)
+  const cached = await resolveCachedAudio(category, audioId, format);
+  if (cached) {
+    return cached;
+  }
+
+  // 2. Fallback to server endpoint (local / AI Studio container disk)
   const query = format ? `?format=${format}` : '';
   const url = `/api/audio/${category}/${audioId}${query}`;
   const headers = {
@@ -197,7 +253,9 @@ export async function fetchAuthorizedAudioBlob(
   }
 
   if (!res.ok) return parseErrorResponse(res);
-  return res.blob();
+  const blob = await res.blob();
+  await saveAudioBlobToCache(category, audioId, format || 'wav', blob);
+  return blob;
 }
 
 export async function triggerAuthorizedDownload(params: {
@@ -222,10 +280,11 @@ export async function apiDeleteAudioFile(
   category: 'samples' | 'generated',
   audioId: string
 ): Promise<void> {
+  await deleteAudioBlobFromCache(category, audioId);
   await fetch(`/api/audio/${category}/${audioId}`, {
     method: 'DELETE',
     headers: {
       'X-Studio-Client-Id': getWorkspaceId(),
     },
-  });
+  }).catch(() => undefined);
 }

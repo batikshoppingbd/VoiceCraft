@@ -51,6 +51,30 @@ function getGenAiClient(): GoogleGenAI {
   });
 }
 
+function formatGeminiError(err: unknown): Error {
+  const raw = err instanceof Error ? err.message : String(err || 'Gemini request failed');
+  try {
+    const parsed = JSON.parse(raw) as { error?: { code?: number; message?: string; status?: string } };
+    if (parsed?.error?.message) {
+      return new Error(parsed.error.message);
+    }
+  } catch {
+    // raw wasn't JSON
+  }
+  return err instanceof Error ? err : new Error(raw);
+}
+
+function isTransientGeminiError(err: unknown): boolean {
+  const msg = (err instanceof Error ? err.message : String(err || '')).toLowerCase();
+  return (
+    msg.includes('503') ||
+    msg.includes('unavailable') ||
+    msg.includes('high demand') ||
+    msg.includes('overloaded') ||
+    msg.includes('econnreset')
+  );
+}
+
 function normalizeGeminiMimeType(mimeType: string, fileName: string): string {
   const lower = (mimeType || '').toLowerCase();
   const ext = fileName.toLowerCase().split('.').pop() || '';
@@ -114,49 +138,65 @@ Perform these steps on the actual audio signal:
    - suggestedPitch: recommended semitone offset (-4.0 to +4.0, 0 if base voice matches well) to align pitch closely with the recorded speaker.
    - suggestedSpeed: recommended speaking rate multiplier (0.85 to 1.15, 1.0 if standard).`;
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-4-hydrogen',
-    contents: { parts: [audioPart, { text: prompt }] },
-    config: {
-      thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
-      responseMimeType: 'application/json',
-      responseSchema: {
-        type: Type.OBJECT,
-        properties: {
-          voiceDetected: { type: Type.BOOLEAN },
-          rejectionReason: { type: Type.STRING },
-          transcript: { type: Type.STRING },
-          detectedLanguage: { type: Type.STRING, enum: ['en', 'bn', 'bilingual'] },
-          estimatedDurationSec: { type: Type.NUMBER },
-          baseVoiceName: {
-            type: Type.STRING,
-            enum: ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'],
+  const buildAnalyzeRequest = (model: string) =>
+    ai.models.generateContent({
+      model,
+      contents: { parts: [audioPart, { text: prompt }] },
+      config: {
+        thinkingConfig: { thinkingLevel: ThinkingLevel.LOW },
+        responseMimeType: 'application/json',
+        responseSchema: {
+          type: Type.OBJECT,
+          properties: {
+            voiceDetected: { type: Type.BOOLEAN },
+            rejectionReason: { type: Type.STRING },
+            transcript: { type: Type.STRING },
+            detectedLanguage: { type: Type.STRING, enum: ['en', 'bn', 'bilingual'] },
+            estimatedDurationSec: { type: Type.NUMBER },
+            baseVoiceName: {
+              type: Type.STRING,
+              enum: ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr'],
+            },
+            pitchRegister: { type: Type.STRING },
+            speakingTempo: { type: Type.STRING },
+            timbreProfile: { type: Type.STRING },
+            acousticSummary: { type: Type.STRING },
+            voiceStylePrompt: { type: Type.STRING },
+            suggestedSpeed: { type: Type.NUMBER },
+            suggestedPitch: { type: Type.NUMBER },
           },
-          pitchRegister: { type: Type.STRING },
-          speakingTempo: { type: Type.STRING },
-          timbreProfile: { type: Type.STRING },
-          acousticSummary: { type: Type.STRING },
-          voiceStylePrompt: { type: Type.STRING },
-          suggestedSpeed: { type: Type.NUMBER },
-          suggestedPitch: { type: Type.NUMBER },
+          required: [
+            'voiceDetected',
+            'transcript',
+            'detectedLanguage',
+            'estimatedDurationSec',
+            'baseVoiceName',
+            'pitchRegister',
+            'speakingTempo',
+            'timbreProfile',
+            'acousticSummary',
+            'voiceStylePrompt',
+            'suggestedSpeed',
+            'suggestedPitch',
+          ],
         },
-        required: [
-          'voiceDetected',
-          'transcript',
-          'detectedLanguage',
-          'estimatedDurationSec',
-          'baseVoiceName',
-          'pitchRegister',
-          'speakingTempo',
-          'timbreProfile',
-          'acousticSummary',
-          'voiceStylePrompt',
-          'suggestedSpeed',
-          'suggestedPitch',
-        ],
       },
-    },
-  });
+    });
+
+  let response;
+  try {
+    response = await buildAnalyzeRequest('gemini-4-hydrogen');
+  } catch (err) {
+    if (!isTransientGeminiError(err)) {
+      throw formatGeminiError(err);
+    }
+    await new Promise((r) => setTimeout(r, 1200));
+    try {
+      response = await buildAnalyzeRequest('gemini-3.1-flash-lite');
+    } catch (retryErr) {
+      throw formatGeminiError(retryErr);
+    }
+  }
 
   const rawText = (response.text ?? '{}').trim();
   let parsed: VoiceAnalysisResult;
@@ -221,32 +261,48 @@ export async function synthesizeClonedSpeech(params: {
     .join(' ')
     .slice(0, 1200);
 
-  const response = await ai.models.generateContent({
-    model: 'gemini-3.8-flash-tts',
-    contents: [
-      {
-        role: 'user',
-        parts: [
-          {
-            text: params.text,
-            speechMetadata: {
-              style: combinedStyle,
+  const buildTtsRequest = () =>
+    ai.models.generateContent({
+      model: 'gemini-3.8-flash-tts',
+      contents: [
+        {
+          role: 'user',
+          parts: [
+            {
+              text: params.text,
+              speechMetadata: {
+                style: combinedStyle,
+              },
             },
-          },
-        ],
-      },
-    ],
-    config: {
-      responseModalities: ['AUDIO'],
-      speechConfig: {
-        voiceConfig: {
-          prebuiltVoiceConfig: {
-            voiceName: params.baseVoiceName,
+          ],
+        },
+      ],
+      config: {
+        responseModalities: ['AUDIO'],
+        speechConfig: {
+          voiceConfig: {
+            prebuiltVoiceConfig: {
+              voiceName: params.baseVoiceName,
+            },
           },
         },
       },
-    },
-  });
+    });
+
+  let response;
+  try {
+    response = await buildTtsRequest();
+  } catch (err) {
+    if (!isTransientGeminiError(err)) {
+      throw formatGeminiError(err);
+    }
+    await new Promise((r) => setTimeout(r, 1200));
+    try {
+      response = await buildTtsRequest();
+    } catch (retryErr) {
+      throw formatGeminiError(retryErr);
+    }
+  }
 
   const base64Audio = response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
   if (!base64Audio) {

@@ -8,12 +8,15 @@
     --font-mono: "JetBrains Mono", ui-monospace, monospace;
   }
 
+  html {
+    scroll-behavior: smooth;
+  }
+
   html,
   body {
     max-width: 100%;
     overflow-x: hidden;
     overscroll-behavior-x: none;
-    touch-action: pan-y;
     -webkit-text-size-adjust: 100%;
   }
 
@@ -40,7 +43,34 @@
   }
 }
 
-/* Custom range slider polish */
+/* Compositor-only hero waveform animation */
+@keyframes vc-wave {
+  0%, 100% {
+    transform: scaleY(0.38);
+    opacity: 0.72;
+  }
+  50% {
+    transform: scaleY(1);
+    opacity: 1;
+  }
+}
+
+.vc-wave-bar {
+  transform-origin: center bottom;
+  animation: vc-wave 1.8s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  will-change: transform, opacity;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+  .vc-wave-bar {
+    animation: none;
+  }
+}
+
+/* Custom range slider polish for VoiceCraft Studio (/app) */
 input[type="range"].studio-slider {
   -webkit-appearance: none;
   appearance: none;

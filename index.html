@@ -2,20 +2,146 @@
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
-    <title>VoiceCraft Studio — AI Voice Cloning & Speech Studio</title>
-    <meta name="description" content="Personal AI voice cloning and multilingual text-to-speech studio supporting English and Bangla with acoustic voice profiling, speed/pitch controls, and WAV/MP3 export." />
-    <meta property="og:title" content="VoiceCraft Studio — AI Voice Cloning & Speech Studio" />
-    <meta property="og:description" content="Personal AI voice cloning and multilingual text-to-speech studio supporting English and Bangla with acoustic voice profiling, speed/pitch controls, and WAV/MP3 export." />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>VoiceCraft – AI Voice Generator | Convert Text to Speech Online</title>
+    <meta
+      name="description"
+      content="Generate natural-sounding AI voices with VoiceCraft. Transform your text into speech using a modern, easy-to-use AI voice generation platform."
+    />
+    <meta name="robots" content="index, follow" />
+    <meta name="theme-color" content="#080D1C" />
+    <link
+      rel="icon"
+      type="image/png"
+      href="/assets/aistudio/file_00000000f3808211bcfd7bd5316f31f5_6f37ae42.png"
+    />
+    <link
+      rel="apple-touch-icon"
+      href="/assets/aistudio/file_00000000f3808211bcfd7bd5316f31f5_6f37ae42.png"
+    />
+    <link rel="canonical" href="https://voicecraft.studio/" id="canonical-url" />
+
+    <!-- Open Graph / Social Share Metadata -->
     <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="VoiceCraft" />
+    <meta property="og:title" content="VoiceCraft – AI Voice Generator | Convert Text to Speech Online" />
+    <meta
+      property="og:description"
+      content="Generate natural-sounding AI voices with VoiceCraft. Transform your text into speech using a modern, easy-to-use AI voice generation platform."
+    />
+    <meta property="og:url" content="https://voicecraft.studio/" id="og-url" />
+    <meta property="og:image" content="/og-voicecraft.jpg" />
+    <meta
+      property="og:image:alt"
+      content="VoiceCraft AI studio condenser microphone surrounded by blue and purple digital voice waves"
+    />
+
+    <!-- Twitter / X Card Metadata -->
     <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="VoiceCraft – AI Voice Generator | Convert Text to Speech Online" />
+    <meta
+      name="twitter:description"
+      content="Generate natural-sounding AI voices with VoiceCraft. Transform your text into speech using a modern, easy-to-use AI voice generation platform."
+    />
+    <meta name="twitter:image" content="/og-voicecraft.jpg" />
+
+    <!-- Structured Data: SoftwareApplication & Organization -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "SoftwareApplication",
+        "name": "VoiceCraft",
+        "applicationCategory": "MultimediaApplication",
+        "operatingSystem": "All",
+        "url": "/",
+        "description": "Generate natural-sounding AI voices with VoiceCraft. Transform your text into speech using a modern, easy-to-use AI voice generation platform.",
+        "featureList": [
+          "AI Text to Speech",
+          "Personal Voice Profile Creation",
+          "Multiple Neural Voice Options",
+          "Speed and Pitch Controls",
+          "WAV and MP3 Audio Download"
+        ],
+        "offers": {
+          "@type": "Offer",
+          "price": "0",
+          "priceCurrency": "USD"
+        },
+        "publisher": {
+          "@type": "Organization",
+          "name": "VoiceCraft"
+        }
+      }
+    </script>
+
+    <!-- Structured Data: FAQPage -->
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "FAQPage",
+        "mainEntity": [
+          {
+            "@type": "Question",
+            "name": "What is VoiceCraft?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "VoiceCraft is an AI-powered platform designed to convert text into generated speech."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "How do I generate an AI voice?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Enter your text, select an available voice, and click the Generate button."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can I create a personal voice profile?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Personal voice profile creation is available if the platform's voice profile feature is enabled."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Can I download generated audio?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes, if audio download is supported by the application."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Is VoiceCraft easy to use?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. VoiceCraft is designed with a simple and user-friendly interface."
+            }
+          },
+          {
+            "@type": "Question",
+            "name": "Does VoiceCraft support mobile devices?",
+            "acceptedAnswer": {
+              "@type": "Answer",
+              "text": "Yes. The website is designed to work on desktop, tablet, and mobile devices."
+            }
+          }
+        ]
+      }
+    </script>
+
+    <!-- Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-    <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&family=Hind+Siliguri:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap" rel="stylesheet" />
+    <link
+      href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,opsz,wght@0,9..40,400..700;1,9..40,400..700&family=Hind+Siliguri:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&family=Plus+Jakarta+Sans:wght@500;600;700&display=swap"
+      rel="stylesheet"
+    />
   </head>
-  <body class="bg-slate-50 text-slate-900 dark:bg-slate-950 dark:text-slate-100 antialiased">
+  <body class="bg-[#080D1C] text-white antialiased">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-

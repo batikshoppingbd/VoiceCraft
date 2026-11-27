@@ -197,8 +197,8 @@ export function VoiceRecorder({ language, onSampleReady }: VoiceRecorderProps) {
       setMicError('Unsupported format. Upload an MP3, WAV, M4A, or WebM audio file.');
       return;
     }
-    if (file.size > 25 * 1024 * 1024) {
-      setMicError('Audio sample must be under 25 MB.');
+    if (file.size > 4 * 1024 * 1024) {
+      setMicError('Audio sample must be under 4 MB. Use a shorter clip (6–30s) or MP3/M4A format.');
       return;
     }
 
@@ -331,7 +331,7 @@ export function VoiceRecorder({ language, onSampleReady }: VoiceRecorderProps) {
             Tap to upload voice sample
           </div>
           <div className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-            MP3, WAV, M4A, or WebM · Max 25 MB
+            MP3, WAV, M4A, or WebM · Max 4 MB
           </div>
         </label>
       )}
