@@ -1,0 +1,6 @@
+{
+  "name": "VoiceCraft Studio",
+  "description": "Personal AI voice cloning and multilingual text-to-speech studio supporting English and Bangla with acoustic voice profiling, speed/pitch controls, and WAV/MP3 export.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

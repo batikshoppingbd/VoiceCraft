@@ -1,0 +1,262 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global safety net: default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Global primitive helpers (loginless device-workspace mode)
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function isValidWorkspaceId(id) {
+      return id is string && id.size() >= 12 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    }
+
+    function incoming() {
+      return request.resource.data;
+    }
+
+    function existing() {
+      return resource.data;
+    }
+
+    function isValidLanguage(lang) {
+      return lang is string && lang in ['en', 'bn', 'bilingual'];
+    }
+
+    function isValidFormat(fmt) {
+      return fmt is string && fmt in ['wav', 'mp3'];
+    }
+
+    function isValidSpeed(spd) {
+      return (spd is int || spd is float) && spd >= 0.5 && spd <= 2.0;
+    }
+
+    function isValidPitch(pitch) {
+      return (pitch is int || pitch is float) && pitch >= -6 && pitch <= 6;
+    }
+
+    // Validation Blueprint: UserProfile (Workspace Settings)
+    function isValidUserProfile(data) {
+      let allowed = [
+        'uid', 'email', 'displayName', 'photoURL',
+        'defaultLanguage', 'defaultSpeed', 'defaultPitch',
+        'defaultFormat', 'themePreference', 'createdAt', 'updatedAt'
+      ];
+      let required = [
+        'uid', 'email', 'displayName',
+        'defaultLanguage', 'defaultSpeed', 'defaultPitch',
+        'defaultFormat', 'themePreference', 'createdAt', 'updatedAt'
+      ];
+      return data.keys().hasAll(required)
+        && data.keys().hasOnly(allowed)
+        && isValidWorkspaceId(data.uid)
+        && data.email is string && data.email.size() <= 256
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 512))
+        && isValidLanguage(data.defaultLanguage)
+        && isValidSpeed(data.defaultSpeed)
+        && isValidPitch(data.defaultPitch)
+        && isValidFormat(data.defaultFormat)
+        && data.themePreference is string && data.themePreference in ['light', 'dark']
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: VoiceProfile
+    function isValidVoiceProfile(data) {
+      let allowed = [
+        'id', 'userId', 'name', 'language', 'sourceType',
+        'sampleAudioId', 'sampleMimeType', 'sampleDurationSec', 'sampleTranscript',
+        'baseVoiceName', 'voiceStylePrompt', 'acousticSummary',
+        'pitchRegister', 'speakingTempo', 'timbreProfile',
+        'defaultSpeed', 'defaultPitch', 'ownershipVerified',
+        'consentStatement', 'verifiedAt', 'previewAudioId',
+        'createdAt', 'updatedAt'
+      ];
+      let required = [
+        'id', 'userId', 'name', 'language', 'sourceType',
+        'sampleAudioId', 'sampleMimeType', 'sampleDurationSec', 'sampleTranscript',
+        'baseVoiceName', 'voiceStylePrompt', 'acousticSummary',
+        'pitchRegister', 'speakingTempo', 'timbreProfile',
+        'defaultSpeed', 'defaultPitch', 'ownershipVerified',
+        'consentStatement', 'verifiedAt', 'createdAt', 'updatedAt'
+      ];
+      return data.keys().hasAll(required)
+        && data.keys().hasOnly(allowed)
+        && isValidId(data.id)
+        && isValidWorkspaceId(data.userId)
+        && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && isValidLanguage(data.language)
+        && data.sourceType is string && data.sourceType in ['microphone', 'upload']
+        && isValidId(data.sampleAudioId)
+        && data.sampleMimeType is string && data.sampleMimeType.size() >= 3 && data.sampleMimeType.size() <= 64
+        && (data.sampleDurationSec is int || data.sampleDurationSec is float) && data.sampleDurationSec > 0 && data.sampleDurationSec <= 600
+        && data.sampleTranscript is string && data.sampleTranscript.size() <= 2000
+        && data.baseVoiceName is string && data.baseVoiceName in ['Puck', 'Charon', 'Kore', 'Fenrir', 'Zephyr']
+        && data.voiceStylePrompt is string && data.voiceStylePrompt.size() >= 10 && data.voiceStylePrompt.size() <= 1500
+        && data.acousticSummary is string && data.acousticSummary.size() <= 600
+        && data.pitchRegister is string && data.pitchRegister.size() >= 1 && data.pitchRegister.size() <= 80
+        && data.speakingTempo is string && data.speakingTempo.size() >= 1 && data.speakingTempo.size() <= 80
+        && data.timbreProfile is string && data.timbreProfile.size() >= 1 && data.timbreProfile.size() <= 120
+        && isValidSpeed(data.defaultSpeed)
+        && isValidPitch(data.defaultPitch)
+        && data.ownershipVerified == true
+        && data.consentStatement is string && data.consentStatement.size() >= 10 && data.consentStatement.size() <= 300
+        && data.verifiedAt is timestamp
+        && (!('previewAudioId' in data) || isValidId(data.previewAudioId))
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: GeneratedAudio
+    function isValidGeneratedAudio(data) {
+      let allowed = [
+        'id', 'userId', 'voiceId', 'voiceName', 'title', 'text', 'language',
+        'speed', 'pitch', 'styleOverride', 'serverAudioId',
+        'durationSec', 'format', 'fileSizeBytes', 'downloadCount',
+        'createdAt', 'updatedAt'
+      ];
+      let required = [
+        'id', 'userId', 'voiceId', 'voiceName', 'text', 'language',
+        'speed', 'pitch', 'serverAudioId',
+        'durationSec', 'format', 'fileSizeBytes', 'downloadCount',
+        'createdAt', 'updatedAt'
+      ];
+      return data.keys().hasAll(required)
+        && data.keys().hasOnly(allowed)
+        && isValidId(data.id)
+        && isValidWorkspaceId(data.userId)
+        && isValidId(data.voiceId)
+        && data.voiceName is string && data.voiceName.size() >= 1 && data.voiceName.size() <= 80
+        && (!('title' in data) || (data.title is string && data.title.size() >= 1 && data.title.size() <= 120))
+        && data.text is string && data.text.size() >= 1 && data.text.size() <= 5000
+        && isValidLanguage(data.language)
+        && isValidSpeed(data.speed)
+        && isValidPitch(data.pitch)
+        && (!('styleOverride' in data) || (data.styleOverride is string && data.styleOverride.size() <= 300))
+        && isValidId(data.serverAudioId)
+        && (data.durationSec is int || data.durationSec is float) && data.durationSec >= 0 && data.durationSec <= 1800
+        && isValidFormat(data.format)
+        && (data.fileSizeBytes is int || data.fileSizeBytes is float) && data.fileSizeBytes > 0 && data.fileSizeBytes <= 52428800
+        && data.downloadCount is int && data.downloadCount >= 0 && data.downloadCount <= 100000
+        && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: DownloadedAudio
+    function isValidDownloadedAudio(data) {
+      let allowed = [
+        'id', 'userId', 'generatedAudioId', 'serverAudioId',
+        'voiceName', 'textSnippet', 'language', 'format',
+        'fileSizeBytes', 'downloadedAt'
+      ];
+      return data.keys().hasAll(allowed)
+        && data.keys().hasOnly(allowed)
+        && isValidId(data.id)
+        && isValidWorkspaceId(data.userId)
+        && isValidId(data.generatedAudioId)
+        && isValidId(data.serverAudioId)
+        && data.voiceName is string && data.voiceName.size() >= 1 && data.voiceName.size() <= 80
+        && data.textSnippet is string && data.textSnippet.size() >= 1 && data.textSnippet.size() <= 200
+        && isValidLanguage(data.language)
+        && isValidFormat(data.format)
+        && (data.fileSizeBytes is int || data.fileSizeBytes is float) && data.fileSizeBytes > 0 && data.fileSizeBytes <= 52428800
+        && data.downloadedAt is timestamp;
+    }
+
+    // Collection: users (Workspace Settings)
+    match /users/{userId} {
+      allow get: if isValidWorkspaceId(userId);
+      allow list: if false;
+      allow create: if isValidWorkspaceId(userId)
+        && isValidUserProfile(incoming())
+        && incoming().uid == userId
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidWorkspaceId(userId)
+        && isValidUserProfile(incoming())
+        && incoming().uid == existing().uid
+        && incoming().email == existing().email
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'photoURL', 'defaultLanguage',
+          'defaultSpeed', 'defaultPitch', 'defaultFormat',
+          'themePreference', 'updatedAt'
+        ]);
+      allow delete: if false;
+    }
+
+    // Collection: voiceProfiles
+    match /voiceProfiles/{voiceId} {
+      allow get: if isValidId(voiceId);
+      allow list: if isValidWorkspaceId(resource.data.userId);
+      allow create: if isValidId(voiceId)
+        && isValidVoiceProfile(incoming())
+        && incoming().id == voiceId
+        && incoming().verifiedAt == request.time
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(voiceId)
+        && isValidVoiceProfile(incoming())
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().sourceType == existing().sourceType
+        && incoming().sampleAudioId == existing().sampleAudioId
+        && incoming().ownershipVerified == existing().ownershipVerified
+        && incoming().consentStatement == existing().consentStatement
+        && incoming().verifiedAt == existing().verifiedAt
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && (
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'language', 'defaultSpeed', 'defaultPitch', 'voiceStylePrompt', 'updatedAt'])
+          || incoming().diff(existing()).affectedKeys().hasOnly(['previewAudioId', 'updatedAt'])
+        );
+      allow delete: if isValidId(voiceId);
+    }
+
+    // Collection: generatedAudios
+    match /generatedAudios/{audioId} {
+      allow get: if isValidId(audioId);
+      allow list: if isValidWorkspaceId(resource.data.userId);
+      allow create: if isValidId(audioId)
+        && isValidGeneratedAudio(incoming())
+        && incoming().id == audioId
+        && incoming().downloadCount == 0
+        && incoming().createdAt == request.time
+        && incoming().updatedAt == request.time
+        && exists(/databases/$(database)/documents/voiceProfiles/$(incoming().voiceId))
+        && get(/databases/$(database)/documents/voiceProfiles/$(incoming().voiceId)).data.userId == incoming().userId;
+      allow update: if isValidId(audioId)
+        && isValidGeneratedAudio(incoming())
+        && incoming().id == existing().id
+        && incoming().userId == existing().userId
+        && incoming().voiceId == existing().voiceId
+        && incoming().serverAudioId == existing().serverAudioId
+        && incoming().createdAt == existing().createdAt
+        && incoming().updatedAt == request.time
+        && incoming().downloadCount == existing().downloadCount + 1
+        && incoming().diff(existing()).affectedKeys().hasOnly(['downloadCount', 'updatedAt']);
+      allow delete: if isValidId(audioId);
+    }
+
+    // Collection: downloadedAudios
+    match /downloadedAudios/{downloadId} {
+      allow get: if isValidId(downloadId);
+      allow list: if isValidWorkspaceId(resource.data.userId);
+      allow create: if isValidId(downloadId)
+        && isValidDownloadedAudio(incoming())
+        && incoming().id == downloadId
+        && incoming().downloadedAt == request.time
+        && exists(/databases/$(database)/documents/generatedAudios/$(incoming().generatedAudioId))
+        && get(/databases/$(database)/documents/generatedAudios/$(incoming().generatedAudioId)).data.userId == incoming().userId;
+      allow update: if false;
+      allow delete: if isValidId(downloadId);
+    }
+  }
+}

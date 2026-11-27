@@ -1,0 +1,381 @@
+{
+  "entities": {
+    "UserProfile": {
+      "title": "UserProfile",
+      "description": "Private user account profile and default studio voice settings.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "defaultLanguage": {
+          "type": "string",
+          "enum": ["en", "bn", "bilingual"]
+        },
+        "defaultSpeed": {
+          "type": "number"
+        },
+        "defaultPitch": {
+          "type": "number"
+        },
+        "defaultFormat": {
+          "type": "string",
+          "enum": ["wav", "mp3"]
+        },
+        "themePreference": {
+          "type": "string",
+          "enum": ["light", "dark"]
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "email",
+        "displayName",
+        "defaultLanguage",
+        "defaultSpeed",
+        "defaultPitch",
+        "defaultFormat",
+        "themePreference",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "VoiceProfile": {
+      "title": "VoiceProfile",
+      "description": "Personal AI cloned voice profile with ownership verification and acoustic DNA.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "language": {
+          "type": "string",
+          "enum": ["en", "bn", "bilingual"]
+        },
+        "sourceType": {
+          "type": "string",
+          "enum": ["microphone", "upload"]
+        },
+        "sampleAudioId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "sampleMimeType": {
+          "type": "string",
+          "maxLength": 64
+        },
+        "sampleDurationSec": {
+          "type": "number"
+        },
+        "sampleTranscript": {
+          "type": "string",
+          "maxLength": 2000
+        },
+        "baseVoiceName": {
+          "type": "string",
+          "enum": ["Puck", "Charon", "Kore", "Fenrir", "Zephyr"]
+        },
+        "voiceStylePrompt": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 1500
+        },
+        "acousticSummary": {
+          "type": "string",
+          "maxLength": 600
+        },
+        "pitchRegister": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "speakingTempo": {
+          "type": "string",
+          "maxLength": 80
+        },
+        "timbreProfile": {
+          "type": "string",
+          "maxLength": 120
+        },
+        "defaultSpeed": {
+          "type": "number"
+        },
+        "defaultPitch": {
+          "type": "number"
+        },
+        "ownershipVerified": {
+          "type": "boolean"
+        },
+        "consentStatement": {
+          "type": "string",
+          "minLength": 10,
+          "maxLength": 300
+        },
+        "verifiedAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "previewAudioId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "name",
+        "language",
+        "sourceType",
+        "sampleAudioId",
+        "sampleMimeType",
+        "sampleDurationSec",
+        "sampleTranscript",
+        "baseVoiceName",
+        "voiceStylePrompt",
+        "acousticSummary",
+        "pitchRegister",
+        "speakingTempo",
+        "timbreProfile",
+        "defaultSpeed",
+        "defaultPitch",
+        "ownershipVerified",
+        "consentStatement",
+        "verifiedAt",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "GeneratedAudio": {
+      "title": "GeneratedAudio",
+      "description": "Text-to-speech synthesis entry generated with a user's cloned voice.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "voiceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "voiceName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "title": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "text": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 5000
+        },
+        "language": {
+          "type": "string",
+          "enum": ["en", "bn", "bilingual"]
+        },
+        "speed": {
+          "type": "number"
+        },
+        "pitch": {
+          "type": "number"
+        },
+        "styleOverride": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "serverAudioId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "durationSec": {
+          "type": "number"
+        },
+        "format": {
+          "type": "string",
+          "enum": ["wav", "mp3"]
+        },
+        "fileSizeBytes": {
+          "type": "number"
+        },
+        "downloadCount": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "voiceId",
+        "voiceName",
+        "text",
+        "language",
+        "speed",
+        "pitch",
+        "serverAudioId",
+        "durationSec",
+        "format",
+        "fileSizeBytes",
+        "downloadCount",
+        "createdAt",
+        "updatedAt"
+      ]
+    },
+    "DownloadedAudio": {
+      "title": "DownloadedAudio",
+      "description": "Export and download ledger for user-generated audio files.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "generatedAudioId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "serverAudioId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "voiceName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "textSnippet": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "language": {
+          "type": "string",
+          "enum": ["en", "bn", "bilingual"]
+        },
+        "format": {
+          "type": "string",
+          "enum": ["wav", "mp3"]
+        },
+        "fileSizeBytes": {
+          "type": "number"
+        },
+        "downloadedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "generatedAudioId",
+        "serverAudioId",
+        "voiceName",
+        "textSnippet",
+        "language",
+        "format",
+        "fileSizeBytes",
+        "downloadedAt"
+      ]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/UserProfile" },
+      "description": "Owner-only user profile and default voice synthesis preferences."
+    },
+    "/voiceProfiles/{voiceId}": {
+      "schema": { "$ref": "#/entities/VoiceProfile" },
+      "description": "Owner-scoped cloned AI voice profiles with verified voice ownership."
+    },
+    "/generatedAudios/{audioId}": {
+      "schema": { "$ref": "#/entities/GeneratedAudio" },
+      "description": "Owner-scoped history of synthesized speech clips."
+    },
+    "/downloadedAudios/{downloadId}": {
+      "schema": { "$ref": "#/entities/DownloadedAudio" },
+      "description": "Owner-scoped history of exported MP3 and WAV downloads."
+    }
+  }
+}
