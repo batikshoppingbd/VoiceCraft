@@ -4,6 +4,8 @@ export type SupportedLanguage = 'en' | 'bn' | 'bilingual';
 export type AudioFormat = 'wav' | 'mp3';
 export type BaseVoiceName = 'Puck' | 'Charon' | 'Kore' | 'Fenrir' | 'Zephyr';
 export type ThemeMode = 'light' | 'dark';
+export type UserRole = 'user' | 'admin';
+export type UserStatus = 'active' | 'suspended';
 
 export type StudioTab = 'home' | 'generate' | 'settings';
 
@@ -12,6 +14,8 @@ export interface UserProfile {
   email: string;
   displayName: string;
   photoURL?: string;
+  role: UserRole;
+  status: UserStatus;
   defaultLanguage: SupportedLanguage;
   defaultSpeed: number;
   defaultPitch: number;
@@ -19,6 +23,17 @@ export interface UserProfile {
   themePreference: ThemeMode;
   createdAt: Timestamp;
   updatedAt: Timestamp;
+}
+
+export interface StudioConfig {
+  ttsEnabled: boolean;
+  voiceCloningEnabled: boolean;
+  maxTextLength: number;
+  defaultLanguage: SupportedLanguage;
+  defaultFormat: AudioFormat;
+  announcement?: string;
+  updatedBy: string;
+  updatedAt?: Timestamp;
 }
 
 export interface VoiceProfile {

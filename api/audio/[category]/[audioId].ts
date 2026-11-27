@@ -1,9 +1,9 @@
-import { validateWorkspaceClientId } from '../../../server/studioHandlers.js';
+import { verifyAuthenticatedUser } from '../../../server/studioHandlers.js';
 import { type ApiRequest, type ApiResponse, sendApiError } from '../../_utils.js';
 
-export default function handler(req: ApiRequest, res: ApiResponse) {
+export default async function handler(req: ApiRequest, res: ApiResponse) {
   try {
-    validateWorkspaceClientId(req.headers['x-studio-client-id']);
+    await verifyAuthenticatedUser(req.headers);
     if (req.method === 'DELETE') {
       res.status(200).json({ deleted: true });
       return;

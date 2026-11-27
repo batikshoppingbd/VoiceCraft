@@ -1,10 +1,12 @@
 import {
   CheckCircle2,
   Loader2,
+  LogOut,
   Mic,
   Moon,
   Play,
   Plus,
+  Shield,
   ShieldCheck,
   Sun,
   Trash2,
@@ -26,6 +28,7 @@ import {
 import type {
   ActiveAudioTrack,
   AudioFormat,
+  StudioConfig,
   SupportedLanguage,
   ThemeMode,
   UserProfile,
@@ -36,12 +39,15 @@ import { VoiceRecorder } from './VoiceRecorder';
 interface SettingsAndCloneViewProps {
   userId: string;
   userProfile: UserProfile | null;
+  studioConfig: StudioConfig;
+  isAdmin: boolean;
   voices: VoiceProfile[];
   theme: ThemeMode;
   onSetTheme: (theme: ThemeMode) => void;
   onVoiceCreated: (voiceId: string) => void;
   onUseVoiceInGenerator: (voiceId: string) => void;
   onPlayTrack: (track: ActiveAudioTrack) => void;
+  onSignOut: () => Promise<void>;
 }
 
 const ANALYSIS_STEPS = [
@@ -54,13 +60,18 @@ const ANALYSIS_STEPS = [
 export function SettingsAndCloneView({
   userId,
   userProfile,
+  studioConfig,
+  isAdmin,
   voices,
   theme,
   onSetTheme,
   onVoiceCreated,
   onUseVoiceInGenerator,
   onPlayTrack,
+  onSignOut,
 }: SettingsAndCloneViewProps) {
+  const cloningPaused = !studioConfig.voiceCloningEnabled && !isAdmin;
+
   const [defaultLanguage, setDefaultLanguage] = useState<SupportedLanguage>(
     userProfile?.defaultLanguage || 'en'
   );
@@ -77,7 +88,7 @@ export function SettingsAndCloneView({
   const [settingsSaved, setSettingsSaved] = useState(false);
   const [settingsError, setSettingsError] = useState<string | null>(null);
 
-  const [showCloneForm, setShowCloneForm] = useState(voices.length === 0);
+  const [showCloneForm, setShowCloneForm] = useState(voices.length === 0 && !cloningPaused);
   const [voiceName, setVoiceName] = useState('');
   const [cloneLang, setCloneLang] = useState<SupportedLanguage>('en');
   const [sample, setSample] = useState<{
@@ -133,6 +144,10 @@ export function SettingsAndCloneView({
   const handleAnalyzeClone = async (e: React.FormEvent) => {
     e.preventDefault();
     setCloneError(null);
+    if (cloningPaused) {
+      setCloneError('Voice cloning is currently paused by the administrator.');
+      return;
+    }
     if (!voiceName.trim()) {
       setCloneError('Please enter a name for your cloned voice.');
       return;
@@ -293,15 +308,24 @@ export function SettingsAndCloneView({
               </div>
               <button
                 type="button"
+                disabled={cloningPaused}
                 onClick={() => setShowCloneForm((prev) => !prev)}
-                className="inline-flex items-center gap-1.5 px-3.5 py-2 min-h-[40px] text-xs font-semibold rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors whitespace-nowrap shrink-0"
+                className="inline-flex items-center gap-1.5 px-3.5 py-2 min-h-[40px] text-xs font-semibold rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors whitespace-nowrap shrink-0"
               >
                 <Plus className="w-4 h-4" />
                 {showCloneForm ? 'Hide Cloner' : 'Clone Voice'}
               </button>
             </div>
 
-            {showCloneForm && (
+            {!studioConfig.voiceCloningEnabled && (
+              <div className="p-3.5 rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50 dark:bg-amber-950/40 text-xs text-amber-800 dark:text-amber-200">
+                {isAdmin
+                  ? 'New voice cloning is currently paused for standard members (Admin access remains active).'
+                  : 'Creating new cloned voices is temporarily paused by the administrator. You can continue using your saved voices below.'}
+              </div>
+            )}
+
+            {showCloneForm && !cloningPaused && (
               <form
                 onSubmit={handleAnalyzeClone}
                 className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-4 min-w-0"
@@ -532,8 +556,66 @@ export function SettingsAndCloneView({
           </div>
         </section>
 
-        {/* Voice Settings & App Theme */}
-        <section className="lg:col-span-5 min-w-0 w-full">
+        {/* Account, Voice Settings & App Theme */}
+        <section className="lg:col-span-5 min-w-0 w-full space-y-5">
+          {userProfile && (
+            <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3 min-w-0">
+                  {userProfile.photoURL ? (
+                    <img
+                      src={userProfile.photoURL}
+                      alt={userProfile.displayName}
+                      referrerPolicy="no-referrer"
+                      className="w-10 h-10 rounded-full object-cover border border-slate-200 dark:border-slate-700 shrink-0"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 rounded-full bg-blue-600 text-white flex items-center justify-center text-sm font-bold shrink-0">
+                      {userProfile.displayName.charAt(0).toUpperCase()}
+                    </div>
+                  )}
+                  <div className="min-w-0">
+                    <div className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
+                      {userProfile.displayName}
+                    </div>
+                    <div className="text-xs text-slate-500 dark:text-slate-400 truncate">
+                      {userProfile.email}
+                    </div>
+                  </div>
+                </div>
+                <span
+                  className={`text-xs font-semibold shrink-0 ${
+                    isAdmin
+                      ? 'text-purple-600 dark:text-purple-400'
+                      : 'text-slate-500 dark:text-slate-400'
+                  }`}
+                >
+                  {isAdmin ? 'Admin' : 'Member'}
+                </span>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-2 pt-3 border-t border-slate-100 dark:border-slate-800">
+                {isAdmin && (
+                  <a
+                    href="/admin"
+                    className="inline-flex items-center gap-1.5 px-3.5 py-2 min-h-[38px] text-xs font-semibold rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                  >
+                    <Shield className="w-3.5 h-3.5" />
+                    Open Admin Panel
+                  </a>
+                )}
+                <button
+                  type="button"
+                  onClick={() => void onSignOut()}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 min-h-[38px] text-xs font-semibold rounded-xl border border-slate-200 dark:border-slate-700 text-slate-700 dark:text-slate-200 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                >
+                  <LogOut className="w-3.5 h-3.5" />
+                  Sign Out
+                </button>
+              </div>
+            </div>
+          )}
+
           <form
             onSubmit={handleSavePreferences}
             className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-5"

@@ -4,7 +4,7 @@ import {
   resolveCachedAudio,
   saveAudioBlobToCache,
 } from './audioCache';
-import { getWorkspaceId } from './firebase';
+import { getAuthIdToken, getWorkspaceId } from './firebase';
 import type {
   AudioFormat,
   BaseVoiceName,
@@ -46,10 +46,25 @@ export interface GenerateTtsResponse {
   mp3Base64?: string;
 }
 
+export interface AdminEngineStatus {
+  geminiConfigured: boolean;
+  runtime: 'vercel' | 'node';
+  modelAnalysis: string;
+  modelTts: string;
+}
+
+async function getAuthHeaders(extra?: Record<string, string>): Promise<Record<string, string>> {
+  const idToken = await getAuthIdToken();
+  return {
+    Authorization: `Bearer ${idToken}`,
+    'X-Studio-Client-Id': getWorkspaceId(),
+    ...extra,
+  };
+}
+
 function extractFriendlyErrorMessage(rawMessage: string, status: number): string {
   const trimmed = rawMessage.trim();
   if (!trimmed) return `Request failed (${status})`;
-  // Extract nested Gemini JSON error message if present
   try {
     const inner = JSON.parse(trimmed) as { error?: { message?: string } | string };
     if (typeof inner?.error === 'string') return inner.error;
@@ -117,6 +132,12 @@ async function parseErrorResponse(res: Response): Promise<never> {
   throw new Error(msg);
 }
 
+export async function apiGetAdminEngineStatus(): Promise<AdminEngineStatus> {
+  const headers = await getAuthHeaders();
+  const res = await fetch('/api/admin/status', { headers });
+  return parseJsonResponse<AdminEngineStatus>(res);
+}
+
 export async function apiAnalyzeVoiceSample(params: {
   audioBlob: Blob;
   fileName: string;
@@ -132,11 +153,10 @@ export async function apiAnalyzeVoiceSample(params: {
   formData.append('ownershipAccepted', String(params.ownershipAccepted));
   formData.append('consentStatement', params.consentStatement);
 
+  const headers = await getAuthHeaders();
   const res = await fetch('/api/voices/analyze', {
     method: 'POST',
-    headers: {
-      'X-Studio-Client-Id': getWorkspaceId(),
-    },
+    headers,
     body: formData,
   });
 
@@ -166,12 +186,10 @@ export async function apiGenerateVoicePreview(params: {
   fileSizeBytes: number;
   previewWavBase64?: string;
 }> {
+  const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
   const res = await fetch('/api/voices/preview', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Studio-Client-Id': getWorkspaceId(),
-    },
+    headers,
     body: JSON.stringify(params),
   });
   const data = await parseJsonResponse<{
@@ -200,12 +218,10 @@ export async function apiGenerateTts(params: {
   styleOverride?: string;
   format: AudioFormat;
 }): Promise<GenerateTtsResponse> {
+  const headers = await getAuthHeaders({ 'Content-Type': 'application/json' });
   const res = await fetch('/api/tts/generate', {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'X-Studio-Client-Id': getWorkspaceId(),
-    },
+    headers,
     body: JSON.stringify(params),
   });
   const data = await parseJsonResponse<GenerateTtsResponse>(res);
@@ -227,18 +243,14 @@ export async function fetchAuthorizedAudioBlob(
   audioId: string,
   format?: AudioFormat
 ): Promise<Blob> {
-  // 1. Always check browser IndexedDB first (works on Vercel serverless & offline)
   const cached = await resolveCachedAudio(category, audioId, format);
   if (cached) {
     return cached;
   }
 
-  // 2. Fallback to server endpoint (local / AI Studio container disk)
   const query = format ? `?format=${format}` : '';
   const url = `/api/audio/${category}/${audioId}${query}`;
-  const headers = {
-    'X-Studio-Client-Id': getWorkspaceId(),
-  };
+  const headers = await getAuthHeaders();
 
   let res: Response;
   try {
@@ -281,10 +293,9 @@ export async function apiDeleteAudioFile(
   audioId: string
 ): Promise<void> {
   await deleteAudioBlobFromCache(category, audioId);
+  const headers = await getAuthHeaders().catch(() => undefined);
   await fetch(`/api/audio/${category}/${audioId}`, {
     method: 'DELETE',
-    headers: {
-      'X-Studio-Client-Id': getWorkspaceId(),
-    },
+    headers,
   }).catch(() => undefined);
 }

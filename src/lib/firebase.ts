@@ -1,11 +1,23 @@
 import { initializeApp } from 'firebase/app';
 import {
+  getAuth,
+  GoogleAuthProvider,
+  signInWithPopup,
+  signOut,
+  type User,
+} from 'firebase/auth';
+import {
+  collection,
   deleteDoc,
   doc,
   getDoc,
   getDocFromServer,
-  initializeFirestore,
+  getDocs,
   increment,
+  initializeFirestore,
+  onSnapshot,
+  orderBy,
+  query,
   serverTimestamp,
   setDoc,
   updateDoc,
@@ -15,12 +27,33 @@ import firebaseConfig from '../../firebase-applet-config.json';
 import type {
   AudioFormat,
   BaseVoiceName,
+  GeneratedAudio,
+  StudioConfig,
   SupportedLanguage,
   ThemeMode,
   UserProfile,
+  UserRole,
+  UserStatus,
+  VoiceProfile,
 } from '../types/studio';
 
+export const BOOTSTRAPPED_ADMIN_EMAIL = 'mdrashidulislamid20@gmail.com';
+
+export const DEFAULT_STUDIO_CONFIG: StudioConfig = {
+  ttsEnabled: true,
+  voiceCloningEnabled: true,
+  maxTextLength: 5000,
+  defaultLanguage: 'en',
+  defaultFormat: 'wav',
+  announcement: '',
+  updatedBy: 'system',
+};
+
 const app = initializeApp(firebaseConfig);
+export const auth = getAuth(app);
+export const googleProvider = new GoogleAuthProvider();
+googleProvider.setCustomParameters({ prompt: 'select_account' });
+
 export const db = initializeFirestore(
   app,
   {
@@ -29,20 +62,8 @@ export const db = initializeFirestore(
   firebaseConfig.firestoreDatabaseId
 );
 
-const WORKSPACE_STORAGE_KEY = 'voicecraft_workspace_id';
-
 export function getWorkspaceId(): string {
-  try {
-    const existing = window.localStorage.getItem(WORKSPACE_STORAGE_KEY);
-    if (existing && /^[a-zA-Z0-9_\-]{12,128}$/.test(existing)) {
-      return existing;
-    }
-    const created = `vcs_${crypto.randomUUID().replace(/-/g, '')}`;
-    window.localStorage.setItem(WORKSPACE_STORAGE_KEY, created);
-    return created;
-  } catch {
-    return 'vcs_default_workspace_session';
-  }
+  return auth.currentUser?.uid || 'unauthenticated';
 }
 
 export enum OperationType {
@@ -58,7 +79,17 @@ export interface FirestoreErrorInfo {
   error: string;
   operationType: OperationType;
   path: string | null;
-  workspaceId: string;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  };
 }
 
 export function handleFirestoreError(
@@ -70,7 +101,18 @@ export function handleFirestoreError(
     error: error instanceof Error ? error.message : String(error),
     operationType,
     path,
-    workspaceId: getWorkspaceId(),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo:
+        auth.currentUser?.providerData?.map((provider) => ({
+          providerId: provider.providerId,
+          email: provider.email,
+        })) || [],
+    },
   };
   console.error('Firestore Error:', JSON.stringify(errInfo));
   throw new Error(JSON.stringify(errInfo));
@@ -87,38 +129,99 @@ async function testConnection() {
 }
 void testConnection();
 
+export async function signInWithGoogle(): Promise<User> {
+  const result = await signInWithPopup(auth, googleProvider);
+  return result.user;
+}
+
+export async function signOutUser(): Promise<void> {
+  await signOut(auth);
+}
+
+export async function getAuthIdToken(): Promise<string> {
+  const user = auth.currentUser;
+  if (!user) {
+    throw new Error('Please sign in with Google first.');
+  }
+  return user.getIdToken();
+}
+
 export function generateSafeId(prefix: string): string {
   const raw = crypto.randomUUID().replace(/-/g, '').slice(0, 20);
   return `${prefix}_${raw}`;
 }
 
-export async function ensureWorkspaceProfile(workspaceId: string): Promise<UserProfile> {
-  const path = `users/${workspaceId}`;
-  const ref = doc(db, 'users', workspaceId);
+async function getDocWithOfflineRetry(ref: ReturnType<typeof doc>) {
   try {
-    let snap;
-    try {
-      snap = await getDoc(ref);
-    } catch (firstErr) {
-      if (
-        firstErr instanceof Error &&
-        (firstErr.message.includes('offline') || firstErr.message.includes('unavailable'))
-      ) {
-        await new Promise((r) => setTimeout(r, 1200));
-        snap = await getDoc(ref);
-      } else {
-        throw firstErr;
+    return await getDoc(ref);
+  } catch (firstErr) {
+    if (
+      firstErr instanceof Error &&
+      (firstErr.message.includes('offline') || firstErr.message.includes('unavailable'))
+    ) {
+      await new Promise((r) => setTimeout(r, 1200));
+      return await getDoc(ref);
+    }
+    throw firstErr;
+  }
+}
+
+export async function ensureAuthenticatedUserProfile(
+  firebaseUser: User
+): Promise<{ profile: UserProfile; isAdmin: boolean }> {
+  const uid = firebaseUser.uid;
+  const email = (firebaseUser.email || '').trim();
+  const displayName =
+    (firebaseUser.displayName || email.split('@')[0] || 'VoiceCraft User').slice(0, 120);
+  const photoURL = firebaseUser.photoURL ? firebaseUser.photoURL.slice(0, 512) : undefined;
+  const isBootstrappedEmail =
+    firebaseUser.emailVerified && email.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL;
+
+  const userRef = doc(db, 'users', uid);
+  const adminRef = doc(db, 'admins', uid);
+  const setupRef = doc(db, 'systemConfig', 'adminSetup');
+
+  try {
+    const existingUserSnap = await getDocWithOfflineRetry(userRef);
+
+    if (existingUserSnap.exists()) {
+      const profile = existingUserSnap.data() as UserProfile;
+      let hasAdminDoc = false;
+      try {
+        const adminSnap = await getDocWithOfflineRetry(adminRef);
+        hasAdminDoc = adminSnap.exists();
+      } catch {
+        hasAdminDoc = false;
       }
+
+      if (isBootstrappedEmail && !hasAdminDoc) {
+        await setDoc(adminRef, {
+          uid,
+          email,
+          grantedBy: 'bootstrapped_owner',
+          createdAt: serverTimestamp(),
+        });
+        hasAdminDoc = true;
+      }
+
+      return {
+        profile,
+        isAdmin: isBootstrappedEmail || hasAdminDoc || profile.role === 'admin',
+      };
     }
 
-    if (snap.exists()) {
-      return snap.data() as UserProfile;
-    }
+    // New user registration: check if first-user admin lock is unclaimed
+    const setupSnap = await getDocWithOfflineRetry(setupRef);
+    const shouldClaimFirstAdmin = !setupSnap.exists();
+    const assignedRole: UserRole =
+      shouldClaimFirstAdmin || isBootstrappedEmail ? 'admin' : 'user';
 
-    const baseData = {
-      uid: workspaceId,
-      email: '',
-      displayName: 'Personal Voice Studio',
+    const userPayload: Record<string, unknown> = {
+      uid,
+      email,
+      displayName,
+      role: assignedRole,
+      status: 'active',
       defaultLanguage: 'en',
       defaultSpeed: 1.0,
       defaultPitch: 0,
@@ -127,13 +230,66 @@ export async function ensureWorkspaceProfile(workspaceId: string): Promise<UserP
       createdAt: serverTimestamp(),
       updatedAt: serverTimestamp(),
     };
+    if (photoURL) {
+      userPayload.photoURL = photoURL;
+    }
 
-    await setDoc(ref, baseData);
-    const createdSnap = await getDoc(ref);
-    return createdSnap.data() as UserProfile;
+    const batch = writeBatch(db);
+    if (shouldClaimFirstAdmin) {
+      batch.set(setupRef, {
+        claimed: true,
+        claimedAt: serverTimestamp(),
+      });
+    }
+    if (assignedRole === 'admin') {
+      batch.set(adminRef, {
+        uid,
+        email,
+        grantedBy: shouldClaimFirstAdmin ? 'first_user_bootstrap' : 'bootstrapped_owner',
+        createdAt: serverTimestamp(),
+      });
+    }
+    batch.set(userRef, userPayload);
+    await batch.commit();
+
+    const createdSnap = await getDocWithOfflineRetry(userRef);
+    return {
+      profile: createdSnap.data() as UserProfile,
+      isAdmin: assignedRole === 'admin',
+    };
   } catch (err) {
-    handleFirestoreError(err, OperationType.WRITE, path);
+    handleFirestoreError(err, OperationType.WRITE, `users/${uid}`);
   }
+}
+
+export function subscribeStudioConfig(
+  onUpdate: (config: StudioConfig) => void
+): () => void {
+  const ref = doc(db, 'systemConfig', 'studio');
+  return onSnapshot(
+    ref,
+    (snap) => {
+      if (snap.exists()) {
+        const data = snap.data() as Partial<StudioConfig>;
+        onUpdate({
+          ttsEnabled: data.ttsEnabled ?? true,
+          voiceCloningEnabled: data.voiceCloningEnabled ?? true,
+          maxTextLength: data.maxTextLength ?? 5000,
+          defaultLanguage: data.defaultLanguage ?? 'en',
+          defaultFormat: data.defaultFormat ?? 'wav',
+          announcement: data.announcement || '',
+          updatedBy: data.updatedBy || 'admin',
+          updatedAt: data.updatedAt,
+        });
+      } else {
+        onUpdate(DEFAULT_STUDIO_CONFIG);
+      }
+    },
+    (err) => {
+      console.warn('Studio config read notice:', err.message);
+      onUpdate(DEFAULT_STUDIO_CONFIG);
+    }
+  );
 }
 
 export async function updateUserSettings(
@@ -154,7 +310,7 @@ export async function updateUserSettings(
       updatedAt: serverTimestamp(),
     };
     if (updates.displayName !== undefined) {
-      payload.displayName = updates.displayName.trim().slice(0, 120) || 'Personal Voice Studio';
+      payload.displayName = updates.displayName.trim().slice(0, 120) || 'VoiceCraft User';
     }
     if (updates.defaultLanguage !== undefined) {
       payload.defaultLanguage = updates.defaultLanguage;
@@ -176,6 +332,108 @@ export async function updateUserSettings(
     handleFirestoreError(err, OperationType.UPDATE, path);
   }
 }
+
+// ---------------- Admin Operations ----------------
+
+export async function adminFetchUsers(): Promise<UserProfile[]> {
+  try {
+    const snap = await getDocs(query(collection(db, 'users'), orderBy('createdAt', 'desc')));
+    return snap.docs.map((d) => d.data() as UserProfile);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, 'users');
+  }
+}
+
+export async function adminSetUserStatus(
+  targetUid: string,
+  nextStatus: UserStatus
+): Promise<void> {
+  const path = `users/${targetUid}`;
+  try {
+    await updateDoc(doc(db, 'users', targetUid), {
+      status: nextStatus,
+      updatedAt: serverTimestamp(),
+    });
+  } catch (err) {
+    handleFirestoreError(err, OperationType.UPDATE, path);
+  }
+}
+
+export async function adminSetUserAdminRole(
+  targetUser: UserProfile,
+  makeAdmin: boolean,
+  grantedByUid: string
+): Promise<void> {
+  const path = `users/${targetUser.uid}`;
+  try {
+    const batch = writeBatch(db);
+    batch.update(doc(db, 'users', targetUser.uid), {
+      role: makeAdmin ? 'admin' : 'user',
+      updatedAt: serverTimestamp(),
+    });
+    if (makeAdmin) {
+      batch.set(doc(db, 'admins', targetUser.uid), {
+        uid: targetUser.uid,
+        email: targetUser.email,
+        grantedBy: grantedByUid,
+        createdAt: serverTimestamp(),
+      });
+    } else {
+      batch.delete(doc(db, 'admins', targetUser.uid));
+    }
+    await batch.commit();
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, path);
+  }
+}
+
+export async function adminSaveStudioConfig(
+  config: Omit<StudioConfig, 'updatedAt' | 'updatedBy'>,
+  adminUid: string
+): Promise<void> {
+  const path = 'systemConfig/studio';
+  try {
+    const payload: Record<string, unknown> = {
+      ttsEnabled: Boolean(config.ttsEnabled),
+      voiceCloningEnabled: Boolean(config.voiceCloningEnabled),
+      maxTextLength: Math.max(200, Math.min(5000, Math.round(config.maxTextLength))),
+      defaultLanguage: config.defaultLanguage,
+      defaultFormat: config.defaultFormat,
+      updatedBy: adminUid.slice(0, 128),
+      updatedAt: serverTimestamp(),
+    };
+    if (config.announcement && config.announcement.trim()) {
+      payload.announcement = config.announcement.trim().slice(0, 300);
+    }
+    await setDoc(doc(db, 'systemConfig', 'studio'), payload);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.WRITE, path);
+  }
+}
+
+export async function adminFetchAllVoices(): Promise<VoiceProfile[]> {
+  try {
+    const snap = await getDocs(
+      query(collection(db, 'voiceProfiles'), orderBy('createdAt', 'desc'))
+    );
+    return snap.docs.map((d) => d.data() as VoiceProfile);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, 'voiceProfiles');
+  }
+}
+
+export async function adminFetchAllAudios(): Promise<GeneratedAudio[]> {
+  try {
+    const snap = await getDocs(
+      query(collection(db, 'generatedAudios'), orderBy('createdAt', 'desc'))
+    );
+    return snap.docs.map((d) => d.data() as GeneratedAudio);
+  } catch (err) {
+    handleFirestoreError(err, OperationType.LIST, 'generatedAudios');
+  }
+}
+
+// ---------------- Studio Entity CRUD ----------------
 
 export async function createVoiceProfileDoc(params: {
   userId: string;
@@ -297,7 +555,11 @@ export async function createGeneratedAudioDoc(params: {
   const audioId = generateSafeId('ga');
   const path = `generatedAudios/${audioId}`;
   try {
-    const cleanTitle = (params.title.trim() || params.text.trim().slice(0, 60) || 'Generated Audio').slice(0, 120);
+    const cleanTitle = (
+      params.title.trim() ||
+      params.text.trim().slice(0, 60) ||
+      'Generated Audio'
+    ).slice(0, 120);
     const payload: Record<string, unknown> = {
       id: audioId,
       userId: params.userId,

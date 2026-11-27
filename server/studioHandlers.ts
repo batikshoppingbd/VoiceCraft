@@ -1,6 +1,9 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { createRequire } from 'node:module';
 import path from 'node:path';
+import { getApp, getApps, initializeApp } from 'firebase-admin/app';
+import { getAuth } from 'firebase-admin/auth';
 import {
   analyzeVoiceSample,
   BaseVoiceName,
@@ -8,11 +11,38 @@ import {
   synthesizeClonedSpeech,
 } from './geminiVoiceEngine.js';
 
+const require = createRequire(import.meta.url);
+
 export const SAFE_ID_REGEX = /^[a-zA-Z0-9_\-]+$/;
 export const SAFE_FILENAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
 
 const ENABLE_LOCAL_DISK_STORAGE = process.env.VERCEL !== '1';
 const STORAGE_ROOT = path.resolve(process.cwd(), 'storage');
+
+let cachedProjectId: string | null = null;
+function getFirebaseProjectId(): string {
+  if (cachedProjectId) return cachedProjectId;
+  let raw: { projectId?: string } = {};
+  try {
+    raw = require('../firebase-applet-config.json') as { projectId?: string };
+  } catch {
+    const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
+    raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as { projectId?: string };
+  }
+  const projectId = raw.projectId || process.env.FIREBASE_PROJECT_ID || '';
+  if (!projectId || projectId === 'remixed-project-id') {
+    throw new Error('Firebase projectId is not configured.');
+  }
+  cachedProjectId = projectId;
+  return cachedProjectId;
+}
+
+function getFirebaseAdminAuth() {
+  const adminApp = getApps().length
+    ? getApp()
+    : initializeApp({ projectId: getFirebaseProjectId() });
+  return getAuth(adminApp);
+}
 
 export class HttpError extends Error {
   status: number;
@@ -20,6 +50,40 @@ export class HttpError extends Error {
     super(message);
     this.status = status;
   }
+}
+
+export async function verifyAuthenticatedUser(headers: {
+  authorization?: unknown;
+}): Promise<{ uid: string; email: string }> {
+  const rawAuth = typeof headers.authorization === 'string' ? headers.authorization : '';
+  const match = rawAuth.match(/^Bearer\s+(.+)$/i);
+  if (!match || !match[1]) {
+    throw new HttpError(401, 'Sign in with Google is required.');
+  }
+  try {
+    const decoded = await getFirebaseAdminAuth().verifyIdToken(match[1].trim());
+    if (!decoded.uid || !SAFE_ID_REGEX.test(decoded.uid)) {
+      throw new HttpError(401, 'Invalid user token.');
+    }
+    return {
+      uid: decoded.uid,
+      email: typeof decoded.email === 'string' ? decoded.email : '',
+    };
+  } catch (err) {
+    if (err instanceof HttpError) throw err;
+    throw new HttpError(401, 'Authentication session expired. Please sign in again.');
+  }
+}
+
+export function getAdminEngineStatus() {
+  const rawKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+  const cleanKey = rawKey.trim().replace(/^["']|["']$/g, '');
+  return {
+    geminiConfigured: Boolean(cleanKey && cleanKey !== 'MY_GEMINI_API_KEY'),
+    runtime: process.env.VERCEL === '1' ? 'vercel' : 'node',
+    modelAnalysis: 'gemini-4-hydrogen',
+    modelTts: 'gemini-3.8-flash-tts',
+  };
 }
 
 export function validateWorkspaceClientId(rawHeader: unknown): string {

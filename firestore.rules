@@ -7,13 +7,37 @@ service cloud.firestore {
       allow read, write: if false;
     }
 
-    // Global primitive helpers (loginless device-workspace mode)
-    function isValidId(id) {
-      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    // Identity & validation primitives
+    function isSignedIn() {
+      return request.auth != null;
     }
 
-    function isValidWorkspaceId(id) {
-      return id is string && id.size() >= 12 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
+    function isVerifiedUser() {
+      return isSignedIn() && request.auth.token.email_verified == true;
+    }
+
+    function isOwner(uid) {
+      return isVerifiedUser() && request.auth.uid == uid;
+    }
+
+    function isBootstrappedAdmin() {
+      return isVerifiedUser() && request.auth.token.email == 'mdrashidulislamid20@gmail.com';
+    }
+
+    function isAdmin() {
+      return isVerifiedUser() && (
+        isBootstrappedAdmin() ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isActiveUser() {
+      return !exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        || get(/databases/$(database)/documents/users/$(request.auth.uid)).data.status == 'active';
+    }
+
+    function isValidId(id) {
+      return id is string && id.size() >= 1 && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$');
     }
 
     function incoming() {
@@ -40,30 +64,75 @@ service cloud.firestore {
       return (pitch is int || pitch is float) && pitch >= -6 && pitch <= 6;
     }
 
-    // Validation Blueprint: UserProfile (Workspace Settings)
+    // Validation Blueprint: UserProfile
     function isValidUserProfile(data) {
       let allowed = [
-        'uid', 'email', 'displayName', 'photoURL',
+        'uid', 'email', 'displayName', 'photoURL', 'role', 'status',
         'defaultLanguage', 'defaultSpeed', 'defaultPitch',
         'defaultFormat', 'themePreference', 'createdAt', 'updatedAt'
       ];
       let required = [
-        'uid', 'email', 'displayName',
+        'uid', 'email', 'displayName', 'role', 'status',
         'defaultLanguage', 'defaultSpeed', 'defaultPitch',
         'defaultFormat', 'themePreference', 'createdAt', 'updatedAt'
       ];
       return data.keys().hasAll(required)
         && data.keys().hasOnly(allowed)
-        && isValidWorkspaceId(data.uid)
-        && data.email is string && data.email.size() <= 256
+        && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 256
         && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120
         && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 512))
+        && data.role is string && data.role in ['user', 'admin']
+        && data.status is string && data.status in ['active', 'suspended']
         && isValidLanguage(data.defaultLanguage)
         && isValidSpeed(data.defaultSpeed)
         && isValidPitch(data.defaultPitch)
         && isValidFormat(data.defaultFormat)
         && data.themePreference is string && data.themePreference in ['light', 'dark']
         && data.createdAt is timestamp
+        && data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: AdminEntry
+    function isValidAdminEntry(data) {
+      let required = ['uid', 'email', 'grantedBy', 'createdAt'];
+      return data.keys().hasAll(required)
+        && data.keys().hasOnly(required)
+        && isValidId(data.uid)
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 256
+        && data.grantedBy is string && data.grantedBy.size() >= 1 && data.grantedBy.size() <= 128
+        && data.createdAt is timestamp;
+    }
+
+    // Validation Blueprint: AdminSetup
+    function isValidAdminSetup(data) {
+      let required = ['claimed', 'claimedAt'];
+      return data.keys().hasAll(required)
+        && data.keys().hasOnly(required)
+        && data.claimed is bool && data.claimed == true
+        && data.claimedAt is timestamp;
+    }
+
+    // Validation Blueprint: StudioConfig
+    function isValidStudioConfig(data) {
+      let allowed = [
+        'ttsEnabled', 'voiceCloningEnabled', 'maxTextLength',
+        'defaultLanguage', 'defaultFormat', 'announcement',
+        'updatedBy', 'updatedAt'
+      ];
+      let required = [
+        'ttsEnabled', 'voiceCloningEnabled', 'maxTextLength',
+        'defaultLanguage', 'defaultFormat', 'updatedBy', 'updatedAt'
+      ];
+      return data.keys().hasAll(required)
+        && data.keys().hasOnly(allowed)
+        && data.ttsEnabled is bool
+        && data.voiceCloningEnabled is bool
+        && data.maxTextLength is int && data.maxTextLength >= 200 && data.maxTextLength <= 5000
+        && isValidLanguage(data.defaultLanguage)
+        && isValidFormat(data.defaultFormat)
+        && (!('announcement' in data) || (data.announcement is string && data.announcement.size() <= 300))
+        && data.updatedBy is string && data.updatedBy.size() >= 1 && data.updatedBy.size() <= 128
         && data.updatedAt is timestamp;
     }
 
@@ -89,7 +158,7 @@ service cloud.firestore {
       return data.keys().hasAll(required)
         && data.keys().hasOnly(allowed)
         && isValidId(data.id)
-        && isValidWorkspaceId(data.userId)
+        && isValidId(data.userId)
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
         && isValidLanguage(data.language)
         && data.sourceType is string && data.sourceType in ['microphone', 'upload']
@@ -130,7 +199,7 @@ service cloud.firestore {
       return data.keys().hasAll(required)
         && data.keys().hasOnly(allowed)
         && isValidId(data.id)
-        && isValidWorkspaceId(data.userId)
+        && isValidId(data.userId)
         && isValidId(data.voiceId)
         && data.voiceName is string && data.voiceName.size() >= 1 && data.voiceName.size() <= 80
         && (!('title' in data) || (data.title is string && data.title.size() >= 1 && data.title.size() <= 120))
@@ -158,7 +227,7 @@ service cloud.firestore {
       return data.keys().hasAll(allowed)
         && data.keys().hasOnly(allowed)
         && isValidId(data.id)
-        && isValidWorkspaceId(data.userId)
+        && isValidId(data.userId)
         && isValidId(data.generatedAudioId)
         && isValidId(data.serverAudioId)
         && data.voiceName is string && data.voiceName.size() >= 1 && data.voiceName.size() <= 80
@@ -169,40 +238,131 @@ service cloud.firestore {
         && data.downloadedAt is timestamp;
     }
 
-    // Collection: users (Workspace Settings)
+    // Collection: users
     match /users/{userId} {
-      allow get: if isValidWorkspaceId(userId);
-      allow list: if false;
-      allow create: if isValidWorkspaceId(userId)
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(userId)
+        && isOwner(userId)
         && isValidUserProfile(incoming())
         && incoming().uid == userId
+        && incoming().email == request.auth.token.email
+        && incoming().status == 'active'
         && incoming().createdAt == request.time
-        && incoming().updatedAt == request.time;
-      allow update: if isValidWorkspaceId(userId)
+        && incoming().updatedAt == request.time
+        && (
+          incoming().role == 'user'
+          || (
+            incoming().role == 'admin'
+            && (
+              isBootstrappedAdmin()
+              || (
+                !exists(/databases/$(database)/documents/systemConfig/adminSetup)
+                && existsAfter(/databases/$(database)/documents/systemConfig/adminSetup)
+                && existsAfter(/databases/$(database)/documents/admins/$(userId))
+              )
+            )
+          )
+        );
+      allow update: if isValidId(userId)
         && isValidUserProfile(incoming())
         && incoming().uid == existing().uid
         && incoming().email == existing().email
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
-        && incoming().diff(existing()).affectedKeys().hasOnly([
-          'displayName', 'photoURL', 'defaultLanguage',
-          'defaultSpeed', 'defaultPitch', 'defaultFormat',
-          'themePreference', 'updatedAt'
-        ]);
+        && (
+          (
+            isOwner(userId)
+            && incoming().role == existing().role
+            && incoming().status == existing().status
+            && incoming().diff(existing()).affectedKeys().hasOnly([
+              'displayName', 'photoURL', 'defaultLanguage',
+              'defaultSpeed', 'defaultPitch', 'defaultFormat',
+              'themePreference', 'updatedAt'
+            ])
+          )
+          || (
+            isAdmin()
+            && userId != request.auth.uid
+            && existing().email != 'mdrashidulislamid20@gmail.com'
+            && incoming().diff(existing()).affectedKeys().hasOnly(['role', 'status', 'updatedAt'])
+          )
+        );
+      allow delete: if false;
+    }
+
+    // Collection: admins
+    match /admins/{adminUid} {
+      allow get: if isValidId(adminUid) && (isOwner(adminUid) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(adminUid)
+        && isVerifiedUser()
+        && isValidAdminEntry(incoming())
+        && incoming().uid == adminUid
+        && incoming().createdAt == request.time
+        && (
+          isAdmin()
+          || (adminUid == request.auth.uid && isBootstrappedAdmin())
+          || (
+            adminUid == request.auth.uid
+            && !exists(/databases/$(database)/documents/systemConfig/adminSetup)
+            && existsAfter(/databases/$(database)/documents/systemConfig/adminSetup)
+          )
+        );
+      allow update: if false;
+      allow delete: if isValidId(adminUid)
+        && isAdmin()
+        && adminUid != request.auth.uid
+        && existing().email != 'mdrashidulislamid20@gmail.com';
+    }
+
+    // Collection: systemConfig (adminSetup & studio settings)
+    match /systemConfig/{configId} {
+      allow get: if isValidId(configId) && isVerifiedUser() && configId in ['adminSetup', 'studio'];
+      allow list: if false;
+      allow create: if isValidId(configId)
+        && isVerifiedUser()
+        && (
+          (
+            configId == 'adminSetup'
+            && !exists(/databases/$(database)/documents/systemConfig/adminSetup)
+            && isValidAdminSetup(incoming())
+            && incoming().claimed == true
+            && incoming().claimedAt == request.time
+            && existsAfter(/databases/$(database)/documents/admins/$(request.auth.uid))
+          )
+          || (
+            configId == 'studio'
+            && isAdmin()
+            && isValidStudioConfig(incoming())
+            && incoming().updatedAt == request.time
+          )
+        );
+      allow update: if isValidId(configId)
+        && configId == 'studio'
+        && isAdmin()
+        && isValidStudioConfig(incoming())
+        && incoming().updatedAt == request.time;
       allow delete: if false;
     }
 
     // Collection: voiceProfiles
     match /voiceProfiles/{voiceId} {
-      allow get: if isValidId(voiceId);
-      allow list: if isValidWorkspaceId(resource.data.userId);
+      allow get: if isValidId(voiceId) && (isOwner(existing().userId) || isAdmin());
+      allow list: if (isVerifiedUser() && resource.data.userId == request.auth.uid) || isAdmin();
       allow create: if isValidId(voiceId)
+        && isVerifiedUser()
+        && isActiveUser()
         && isValidVoiceProfile(incoming())
         && incoming().id == voiceId
+        && incoming().userId == request.auth.uid
         && incoming().verifiedAt == request.time
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time;
       allow update: if isValidId(voiceId)
+        && isVerifiedUser()
+        && isActiveUser()
+        && (isOwner(existing().userId) || isAdmin())
         && isValidVoiceProfile(incoming())
         && incoming().id == existing().id
         && incoming().userId == existing().userId
@@ -217,22 +377,27 @@ service cloud.firestore {
           incoming().diff(existing()).affectedKeys().hasOnly(['name', 'language', 'defaultSpeed', 'defaultPitch', 'voiceStylePrompt', 'updatedAt'])
           || incoming().diff(existing()).affectedKeys().hasOnly(['previewAudioId', 'updatedAt'])
         );
-      allow delete: if isValidId(voiceId);
+      allow delete: if isValidId(voiceId) && (isOwner(existing().userId) || isAdmin());
     }
 
     // Collection: generatedAudios
     match /generatedAudios/{audioId} {
-      allow get: if isValidId(audioId);
-      allow list: if isValidWorkspaceId(resource.data.userId);
+      allow get: if isValidId(audioId) && (isOwner(existing().userId) || isAdmin());
+      allow list: if (isVerifiedUser() && resource.data.userId == request.auth.uid) || isAdmin();
       allow create: if isValidId(audioId)
+        && isVerifiedUser()
+        && isActiveUser()
         && isValidGeneratedAudio(incoming())
         && incoming().id == audioId
+        && incoming().userId == request.auth.uid
         && incoming().downloadCount == 0
         && incoming().createdAt == request.time
         && incoming().updatedAt == request.time
         && exists(/databases/$(database)/documents/voiceProfiles/$(incoming().voiceId))
         && get(/databases/$(database)/documents/voiceProfiles/$(incoming().voiceId)).data.userId == incoming().userId;
       allow update: if isValidId(audioId)
+        && isVerifiedUser()
+        && isOwner(existing().userId)
         && isValidGeneratedAudio(incoming())
         && incoming().id == existing().id
         && incoming().userId == existing().userId
@@ -242,21 +407,24 @@ service cloud.firestore {
         && incoming().updatedAt == request.time
         && incoming().downloadCount == existing().downloadCount + 1
         && incoming().diff(existing()).affectedKeys().hasOnly(['downloadCount', 'updatedAt']);
-      allow delete: if isValidId(audioId);
+      allow delete: if isValidId(audioId) && (isOwner(existing().userId) || isAdmin());
     }
 
     // Collection: downloadedAudios
     match /downloadedAudios/{downloadId} {
-      allow get: if isValidId(downloadId);
-      allow list: if isValidWorkspaceId(resource.data.userId);
+      allow get: if isValidId(downloadId) && (isOwner(existing().userId) || isAdmin());
+      allow list: if (isVerifiedUser() && resource.data.userId == request.auth.uid) || isAdmin();
       allow create: if isValidId(downloadId)
+        && isVerifiedUser()
+        && isActiveUser()
         && isValidDownloadedAudio(incoming())
         && incoming().id == downloadId
+        && incoming().userId == request.auth.uid
         && incoming().downloadedAt == request.time
         && exists(/databases/$(database)/documents/generatedAudios/$(incoming().generatedAudioId))
         && get(/databases/$(database)/documents/generatedAudios/$(incoming().generatedAudioId)).data.userId == incoming().userId;
       allow update: if false;
-      allow delete: if isValidId(downloadId);
+      allow delete: if isValidId(downloadId) && (isOwner(existing().userId) || isAdmin());
     }
   }
 }

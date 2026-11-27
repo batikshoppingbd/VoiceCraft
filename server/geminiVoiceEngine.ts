@@ -34,10 +34,15 @@ export interface SynthesisResult {
 }
 
 function getGenAiClient(): GoogleGenAI {
-  const apiKey = process.env.GEMINI_API_KEY;
+  const rawKey = process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || '';
+  const apiKey = rawKey.trim().replace(/^["']|["']$/g, '');
   if (!apiKey || apiKey === 'MY_GEMINI_API_KEY') {
+    const locationHint =
+      process.env.VERCEL === '1'
+        ? 'Vercel Project Settings > Environment Variables (then Redeploy)'
+        : 'Settings > Secrets';
     throw new Error(
-      'GEMINI_API_KEY is not configured. Add your Gemini API key in Settings > Secrets to enable AI voice analysis and speech synthesis.'
+      `GEMINI_API_KEY is not configured. Add your Gemini API key in ${locationHint} to enable AI voice analysis and speech synthesis.`
     );
   }
   return new GoogleGenAI({

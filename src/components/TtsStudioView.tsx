@@ -12,6 +12,7 @@ import { createGeneratedAudioDoc, recordAudioDownload } from '../lib/firebase';
 import type {
   ActiveAudioTrack,
   AudioFormat,
+  StudioConfig,
   SupportedLanguage,
   UserProfile,
   VoiceProfile,
@@ -20,6 +21,8 @@ import type {
 interface TtsStudioViewProps {
   userId: string;
   userProfile: UserProfile | null;
+  studioConfig: StudioConfig;
+  isAdmin: boolean;
   voices: VoiceProfile[];
   selectedVoiceId: string | null;
   onSelectVoiceId: (id: string) => void;
@@ -65,6 +68,8 @@ const SAMPLE_SCRIPTS: Record<SupportedLanguage, { label: string; title: string; 
 export function TtsStudioView({
   userId,
   userProfile,
+  studioConfig,
+  isAdmin,
   voices,
   selectedVoiceId,
   onSelectVoiceId,
@@ -74,6 +79,8 @@ export function TtsStudioView({
 }: TtsStudioViewProps) {
   const activeVoice =
     voices.find((v) => v.id === selectedVoiceId) || voices[0] || null;
+  const maxTextLength = studioConfig.maxTextLength || 5000;
+  const generatorPaused = !studioConfig.ttsEnabled && !isAdmin;
 
   const [title, setTitle] = useState('');
   const [text, setText] = useState('');
@@ -115,6 +122,10 @@ export function TtsStudioView({
 
   const handleGenerate = async () => {
     setError(null);
+    if (generatorPaused) {
+      setError('Speech generation is currently paused by the administrator.');
+      return;
+    }
     if (!activeVoice) {
       setError('Please clone a voice in Settings first.');
       return;
@@ -122,6 +133,10 @@ export function TtsStudioView({
     const trimmedText = text.trim();
     if (!trimmedText) {
       setError('Enter English or Bangla text to convert into speech.');
+      return;
+    }
+    if (trimmedText.length > maxTextLength) {
+      setError(`Text exceeds the current limit of ${maxTextLength.toLocaleString()} characters.`);
       return;
     }
 
@@ -265,6 +280,14 @@ export function TtsStudioView({
         </p>
       </div>
 
+      {!studioConfig.ttsEnabled && (
+        <div className="p-3.5 rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50 dark:bg-amber-950/40 text-xs text-amber-800 dark:text-amber-200">
+          {isAdmin
+            ? 'Voice Generator is currently paused for standard members (Admin access remains active).'
+            : 'Voice generation is temporarily paused by the workspace administrator.'}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-5 items-start">
         {/* Script & Voice Card */}
         <div className="lg:col-span-7 min-w-0 w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-4 sm:p-5 space-y-4">
@@ -371,7 +394,7 @@ export function TtsStudioView({
           <div>
             <textarea
               rows={5}
-              maxLength={5000}
+              maxLength={maxTextLength}
               value={text}
               onChange={(e) => setText(e.target.value)}
               placeholder={
@@ -386,7 +409,7 @@ export function TtsStudioView({
 
             <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 mt-1.5">
               <span className="font-mono tabular-nums">
-                {text.length} / 5,000 chars
+                {text.length} / {maxTextLength.toLocaleString()} chars
               </span>
               {text.length > 0 && (
                 <button
@@ -499,7 +522,7 @@ export function TtsStudioView({
             <button
               type="button"
               onClick={handleGenerate}
-              disabled={generating || !text.trim()}
+              disabled={generating || !text.trim() || generatorPaused}
               className="w-full inline-flex items-center justify-center gap-2 px-6 py-3.5 min-h-[48px] text-sm font-semibold rounded-xl bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
             >
               {generating ? (

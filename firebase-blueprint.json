@@ -2,7 +2,7 @@
   "entities": {
     "UserProfile": {
       "title": "UserProfile",
-      "description": "Private user account profile and default studio voice settings.",
+      "description": "Authenticated user account, role, moderation status, and default studio voice settings.",
       "type": "object",
       "properties": {
         "uid": {
@@ -23,6 +23,14 @@
         "photoURL": {
           "type": "string",
           "maxLength": 512
+        },
+        "role": {
+          "type": "string",
+          "enum": ["user", "admin"]
+        },
+        "status": {
+          "type": "string",
+          "enum": ["active", "suspended"]
         },
         "defaultLanguage": {
           "type": "string",
@@ -55,12 +63,102 @@
         "uid",
         "email",
         "displayName",
+        "role",
+        "status",
         "defaultLanguage",
         "defaultSpeed",
         "defaultPitch",
         "defaultFormat",
         "themePreference",
         "createdAt",
+        "updatedAt"
+      ]
+    },
+    "AdminEntry": {
+      "title": "AdminEntry",
+      "description": "Trusted admin role assignment record.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "grantedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["uid", "email", "grantedBy", "createdAt"]
+    },
+    "AdminSetup": {
+      "title": "AdminSetup",
+      "description": "Write-once singleton lock recording that first-user admin bootstrap completed.",
+      "type": "object",
+      "properties": {
+        "claimed": {
+          "type": "boolean"
+        },
+        "claimedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": ["claimed", "claimedAt"]
+    },
+    "StudioConfig": {
+      "title": "StudioConfig",
+      "description": "Admin-managed platform controls for voice generation and voice cloning.",
+      "type": "object",
+      "properties": {
+        "ttsEnabled": {
+          "type": "boolean"
+        },
+        "voiceCloningEnabled": {
+          "type": "boolean"
+        },
+        "maxTextLength": {
+          "type": "number"
+        },
+        "defaultLanguage": {
+          "type": "string",
+          "enum": ["en", "bn", "bilingual"]
+        },
+        "defaultFormat": {
+          "type": "string",
+          "enum": ["wav", "mp3"]
+        },
+        "announcement": {
+          "type": "string",
+          "maxLength": 300
+        },
+        "updatedBy": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "ttsEnabled",
+        "voiceCloningEnabled",
+        "maxTextLength",
+        "defaultLanguage",
+        "defaultFormat",
+        "updatedBy",
         "updatedAt"
       ]
     },
@@ -363,7 +461,19 @@
   "firestore": {
     "/users/{userId}": {
       "schema": { "$ref": "#/entities/UserProfile" },
-      "description": "Owner-only user profile and default voice synthesis preferences."
+      "description": "Authenticated user profile, RBAC role, account status, and default studio preferences."
+    },
+    "/admins/{adminUid}": {
+      "schema": { "$ref": "#/entities/AdminEntry" },
+      "description": "Trusted admin role assignment documents."
+    },
+    "/systemConfig/adminSetup": {
+      "schema": { "$ref": "#/entities/AdminSetup" },
+      "description": "Write-once singleton lock for first-user admin claiming."
+    },
+    "/systemConfig/studio": {
+      "schema": { "$ref": "#/entities/StudioConfig" },
+      "description": "Admin-managed VoiceCraft platform settings and feature toggles."
     },
     "/voiceProfiles/{voiceId}": {
       "schema": { "$ref": "#/entities/VoiceProfile" },

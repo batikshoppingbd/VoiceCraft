@@ -6,13 +6,14 @@ import multer from 'multer';
 import { createServer as createViteServer } from 'vite';
 import { encodePcmToMp3, parseWavBuffer } from './server/audioProcessor.js';
 import {
+  getAdminEngineStatus,
   handleAnalyzeVoiceRequest,
   handleGenerateTtsRequest,
   handlePreviewVoiceRequest,
   HttpError,
   resolveSafeUserFile,
   SAFE_ID_REGEX,
-  validateWorkspaceClientId,
+  verifyAuthenticatedUser,
 } from './server/studioHandlers.js';
 
 const PORT = Number(process.env.PORT || 3000);
@@ -46,17 +47,18 @@ function findExistingUserAudioFile(
   return null;
 }
 
-function requireWorkspaceClient(
+async function requireAuthenticatedUser(
   req: WorkspaceRequest,
   res: Response,
   next: NextFunction
-): void {
+): Promise<void> {
   try {
-    req.uid = validateWorkspaceClientId(req.headers['x-studio-client-id']);
+    const authUser = await verifyAuthenticatedUser(req.headers);
+    req.uid = authUser.uid;
     next();
   } catch (err) {
-    const status = err instanceof HttpError ? err.status : 400;
-    const message = err instanceof Error ? err.message : 'Valid workspace identifier is required.';
+    const status = err instanceof HttpError ? err.status : 401;
+    const message = err instanceof Error ? err.message : 'Sign in with Google is required.';
     res.status(status).json({ error: message });
   }
 }
@@ -89,10 +91,14 @@ async function startServer() {
     res.json({ status: 'ok', service: 'voicecraft-studio' });
   });
 
+  app.get('/api/admin/status', requireAuthenticatedUser, (_req, res) => {
+    res.json(getAdminEngineStatus());
+  });
+
   // 1. Analyze uploaded/recorded voice sample & build cloned voice profile + preview clip
   app.post(
     '/api/voices/analyze',
-    requireWorkspaceClient,
+    requireAuthenticatedUser,
     upload.single('audio'),
     async (req: WorkspaceRequest, res: Response) => {
       try {
@@ -115,7 +121,7 @@ async function startServer() {
   // 2. Generate/regenerate preview clip for an existing cloned voice profile
   app.post(
     '/api/voices/preview',
-    requireWorkspaceClient,
+    requireAuthenticatedUser,
     async (req: WorkspaceRequest, res: Response) => {
       try {
         const result = await handlePreviewVoiceRequest({
@@ -136,7 +142,7 @@ async function startServer() {
   // 3. Text-to-Speech synthesis using the selected cloned voice profile
   app.post(
     '/api/tts/generate',
-    requireWorkspaceClient,
+    requireAuthenticatedUser,
     async (req: WorkspaceRequest, res: Response) => {
       try {
         const result = await handleGenerateTtsRequest({
@@ -157,7 +163,7 @@ async function startServer() {
   // 4. Authenticated audio stream & WAV/MP3 export endpoint
   app.get(
     '/api/audio/:category/:audioId',
-    requireWorkspaceClient,
+    requireAuthenticatedUser,
     (req: WorkspaceRequest, res: Response) => {
       try {
         const uid = req.uid!;
@@ -242,7 +248,7 @@ async function startServer() {
   // 5. Authenticated delete audio file endpoint
   app.delete(
     '/api/audio/:category/:audioId',
-    requireWorkspaceClient,
+    requireAuthenticatedUser,
     (req: WorkspaceRequest, res: Response) => {
       try {
         const uid = req.uid!;
