@@ -1,28 +1,29 @@
-import type { Timestamp } from 'firebase/firestore';
-
 export type SupportedLanguage = 'en' | 'bn' | 'bilingual';
 export type AudioFormat = 'wav' | 'mp3';
 export type BaseVoiceName = 'Puck' | 'Charon' | 'Kore' | 'Fenrir' | 'Zephyr';
 export type ThemeMode = 'light' | 'dark';
-export type UserRole = 'user' | 'admin';
-export type UserStatus = 'active' | 'suspended';
+export type VoiceProfileStatus =
+  | 'not_created'
+  | 'sample_added'
+  | 'processing'
+  | 'ready'
+  | 'failed';
 
-export type StudioTab = 'home' | 'generate' | 'settings';
+export type StudioTab = 'home' | 'generate' | 'profile';
+export type ProfileSection = 'settings' | 'workspace' | 'clone';
 
-export interface UserProfile {
+export interface UserSettings {
   uid: string;
-  email: string;
   displayName: string;
-  photoURL?: string;
-  role: UserRole;
-  status: UserStatus;
+  defaultVoiceId?: string;
   defaultLanguage: SupportedLanguage;
   defaultSpeed: number;
   defaultPitch: number;
   defaultFormat: AudioFormat;
+  autoPlayAfterGenerate: boolean;
+  playbackSpeed: number;
   themePreference: ThemeMode;
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
+  updatedAt: number;
 }
 
 export interface StudioConfig {
@@ -32,20 +33,20 @@ export interface StudioConfig {
   defaultLanguage: SupportedLanguage;
   defaultFormat: AudioFormat;
   announcement?: string;
-  updatedBy: string;
-  updatedAt?: Timestamp;
+  updatedAt: number;
 }
 
 export interface VoiceProfile {
   id: string;
   userId: string;
   name: string;
+  status?: VoiceProfileStatus;
   language: SupportedLanguage;
-  sourceType: 'microphone' | 'upload';
-  sampleAudioId: string;
-  sampleMimeType: string;
-  sampleDurationSec: number;
-  sampleTranscript: string;
+  sourceType: 'microphone' | 'upload' | 'preset';
+  sampleAudioId?: string;
+  sampleMimeType?: string;
+  sampleDurationSec?: number;
+  sampleTranscript?: string;
   baseVoiceName: BaseVoiceName;
   voiceStylePrompt: string;
   acousticSummary: string;
@@ -56,10 +57,9 @@ export interface VoiceProfile {
   defaultPitch: number;
   ownershipVerified: boolean;
   consentStatement: string;
-  verifiedAt: Timestamp;
   previewAudioId?: string;
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface GeneratedAudio {
@@ -78,8 +78,8 @@ export interface GeneratedAudio {
   format: AudioFormat;
   fileSizeBytes: number;
   downloadCount: number;
-  createdAt: Timestamp;
-  updatedAt: Timestamp;
+  createdAt: number;
+  updatedAt: number;
 }
 
 export interface DownloadedAudio {
@@ -92,7 +92,7 @@ export interface DownloadedAudio {
   language: SupportedLanguage;
   format: AudioFormat;
   fileSizeBytes: number;
-  downloadedAt: Timestamp;
+  downloadedAt: number;
 }
 
 export interface ActiveAudioTrack {

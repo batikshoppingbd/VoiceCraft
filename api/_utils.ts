@@ -24,7 +24,7 @@ const vercelUpload = multer({
     fileSize: 4 * 1024 * 1024 + 256 * 1024, // ~4.25 MB safe for Vercel serverless body limit
   },
   fileFilter: (_req, file, cb) => {
-    const allowedExts = ['.mp3', '.wav', '.m4a', '.webm', '.ogg'];
+    const allowedExts = ['.mp3', '.wav', '.m4a', '.aac', '.webm', '.ogg', '.opus', '.flac'];
     const ext = path.extname(file.originalname || '').toLowerCase();
     const isAudioMime =
       file.mimetype.startsWith('audio/') ||
@@ -33,7 +33,7 @@ const vercelUpload = multer({
     if (isAudioMime || allowedExts.includes(ext)) {
       cb(null, true);
     } else {
-      cb(new Error('Unsupported audio format. Please upload MP3, WAV, M4A, or WebM audio.'));
+      cb(new Error('Unsupported audio format. Please upload MP3, WAV, M4A, AAC, OGG, or WebM audio.'));
     }
   },
 }).single('audio');

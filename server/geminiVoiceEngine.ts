@@ -56,17 +56,40 @@ function getGenAiClient(): GoogleGenAI {
   });
 }
 
+export class VoiceInputValidationError extends Error {
+  status: number;
+  constructor(status: number, message: string) {
+    super(message);
+    this.status = status;
+  }
+}
+
 function formatGeminiError(err: unknown): Error {
   const raw = err instanceof Error ? err.message : String(err || 'Gemini request failed');
+  let extracted = raw;
   try {
     const parsed = JSON.parse(raw) as { error?: { code?: number; message?: string; status?: string } };
     if (parsed?.error?.message) {
-      return new Error(parsed.error.message);
+      extracted = parsed.error.message;
     }
   } catch {
     // raw wasn't JSON
   }
-  return err instanceof Error ? err : new Error(raw);
+
+  const lower = extracted.toLowerCase();
+  if (
+    lower.includes('unable to process input') ||
+    lower.includes('empty, corrupted, or malformed') ||
+    lower.includes('unsupported audio') ||
+    lower.includes('invalid audio')
+  ) {
+    return new VoiceInputValidationError(
+      422,
+      'This audio sample could not be decoded (empty, silent, or unsupported codec). Please record with your microphone or upload a clear WAV, MP3, or M4A recording.'
+    );
+  }
+
+  return err instanceof Error ? new Error(extracted) : new Error(extracted);
 }
 
 function isTransientGeminiError(err: unknown): boolean {
@@ -80,15 +103,69 @@ function isTransientGeminiError(err: unknown): boolean {
   );
 }
 
-function normalizeGeminiMimeType(mimeType: string, fileName: string): string {
-  const lower = (mimeType || '').toLowerCase();
+function detectAudioMimeFromBuffer(
+  buffer: Buffer,
+  clientMimeType: string,
+  fileName: string
+): string {
+  if (!buffer || buffer.length < 512) {
+    throw new VoiceInputValidationError(
+      400,
+      'The uploaded audio sample is empty or too short. Please record or upload at least 2 seconds of speech.'
+    );
+  }
+
+  // 1. Inspect magic bytes first so mislabeled extensions/MIME types never send invalid container bytes
+  if (
+    buffer.length >= 12 &&
+    buffer.toString('ascii', 0, 4) === 'RIFF' &&
+    buffer.toString('ascii', 8, 12) === 'WAVE'
+  ) {
+    return 'audio/wav';
+  }
+  if (buffer.toString('ascii', 0, 3) === 'ID3') {
+    return 'audio/mp3';
+  }
+  if (buffer[0] === 0xff && (buffer[1] & 0xf6) === 0xf0) {
+    // ADTS AAC frame sync (0xFF 0xF1 / 0xFF 0xF9)
+    return 'audio/aac';
+  }
+  if (buffer[0] === 0xff && (buffer[1] & 0xe0) === 0xe0) {
+    // MPEG-1/2/2.5 Layer III frame sync
+    return 'audio/mp3';
+  }
+  if (buffer.length >= 12 && buffer.toString('ascii', 4, 8) === 'ftyp') {
+    return 'audio/mp4';
+  }
+  if (buffer.toString('ascii', 0, 4) === 'OggS') {
+    return 'audio/ogg';
+  }
+  if (buffer.toString('ascii', 0, 4) === 'fLaC') {
+    return 'audio/flac';
+  }
+  if (
+    buffer[0] === 0x1a &&
+    buffer[1] === 0x45 &&
+    buffer[2] === 0xdf &&
+    buffer[3] === 0xa3
+  ) {
+    return 'audio/webm';
+  }
+
+  // 2. Fallback to explicit audio mime/extension only if known (never blindly default to audio/wav)
+  const lower = (clientMimeType || '').toLowerCase();
   const ext = fileName.toLowerCase().split('.').pop() || '';
-  if (lower.includes('wav') || ext === 'wav') return 'audio/wav';
   if (lower.includes('mpeg') || lower.includes('mp3') || ext === 'mp3') return 'audio/mp3';
   if (lower.includes('mp4') || lower.includes('m4a') || ext === 'm4a') return 'audio/mp4';
   if (lower.includes('webm') || ext === 'webm') return 'audio/webm';
-  if (lower.includes('ogg') || ext === 'ogg') return 'audio/ogg';
-  return 'audio/wav';
+  if (lower.includes('ogg') || lower.includes('opus') || ext === 'ogg' || ext === 'opus') return 'audio/ogg';
+  if (lower.includes('aac') || ext === 'aac') return 'audio/aac';
+  if (lower.includes('flac') || ext === 'flac') return 'audio/flac';
+
+  throw new VoiceInputValidationError(
+    400,
+    'The uploaded audio file is corrupted or in an unrecognized format. Please record via microphone or upload a valid WAV, MP3, or M4A file.'
+  );
 }
 
 export async function analyzeVoiceSample(params: {
@@ -99,16 +176,42 @@ export async function analyzeVoiceSample(params: {
   consentPhrase: string;
 }): Promise<VoiceAnalysisResult> {
   const ai = getGenAiClient();
-  const normalizedMime = normalizeGeminiMimeType(params.mimeType, params.fileName);
+  const normalizedMime = detectAudioMimeFromBuffer(
+    params.audioBuffer,
+    params.mimeType,
+    params.fileName
+  );
 
-  // Measure exact duration if WAV
+  // Validate WAV header and verify non-silent audio when WAV container is detected
   let wavDuration: number | null = null;
   if (normalizedMime === 'audio/wav') {
+    let parsed;
     try {
-      const parsed = parseWavBuffer(params.audioBuffer);
+      parsed = parseWavBuffer(params.audioBuffer);
       wavDuration = parsed.durationSec;
     } catch {
-      // Ignore if non-standard WAV header; Gemini still inspects audio bytes
+      throw new VoiceInputValidationError(
+        400,
+        'This WAV file appears corrupted or uses an unsupported encoding. Please re-record with the microphone or upload a standard PCM WAV/MP3 file.'
+      );
+    }
+    if (parsed.durationSec < 1.0 || parsed.pcm.length < 8000) {
+      throw new VoiceInputValidationError(
+        400,
+        'Audio sample is too short (minimum 1.5 seconds of clear speech required).'
+      );
+    }
+    let maxAbs = 0;
+    const stride = Math.max(1, Math.floor(parsed.pcm.length / 4000));
+    for (let i = 0; i < parsed.pcm.length; i += stride) {
+      const a = Math.abs(parsed.pcm[i]);
+      if (a > maxAbs) maxAbs = a;
+    }
+    if (maxAbs < 60) {
+      throw new VoiceInputValidationError(
+        400,
+        'The recorded audio contains only silence. Check your microphone input and speak clearly for 6–15 seconds.'
+      );
     }
   }
 

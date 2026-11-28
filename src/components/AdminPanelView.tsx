@@ -5,16 +5,11 @@ import {
   Cpu,
   KeyRound,
   Loader2,
-  LogOut,
   Mic,
   RefreshCw,
   Search,
-  Shield,
   Sliders,
   Trash2,
-  UserCheck,
-  Users,
-  UserX,
   Volume2,
 } from 'lucide-react';
 import { FormEvent, useEffect, useMemo, useState } from 'react';
@@ -24,50 +19,29 @@ import {
   type AdminEngineStatus,
 } from '../lib/api';
 import {
-  adminFetchAllAudios,
-  adminFetchAllVoices,
-  adminFetchUsers,
-  adminSaveStudioConfig,
-  adminSetUserAdminRole,
-  adminSetUserStatus,
-  BOOTSTRAPPED_ADMIN_EMAIL,
   deleteGeneratedAudioDoc,
   deleteVoiceProfileDoc,
-} from '../lib/firebase';
+  fetchAllAudios,
+  fetchAllVoices,
+  saveStudioConfig,
+} from '../lib/studioStore';
 import type {
   AudioFormat,
   GeneratedAudio,
   StudioConfig,
   SupportedLanguage,
-  UserProfile,
   VoiceProfile,
 } from '../types/studio';
 
 interface AdminPanelViewProps {
-  currentUser: UserProfile;
   studioConfig: StudioConfig;
-  onSignOut: () => Promise<void>;
 }
 
-type AdminSection = 'overview' | 'users' | 'generator' | 'library';
+type AdminSection = 'overview' | 'generator' | 'library';
 
-function formatDate(ts: { toDate?: () => Date } | undefined): string {
-  if (!ts?.toDate) return '—';
-  return ts.toDate().toLocaleDateString([], {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  });
-}
-
-export function AdminPanelView({
-  currentUser,
-  studioConfig,
-  onSignOut,
-}: AdminPanelViewProps) {
+export function AdminPanelView({ studioConfig }: AdminPanelViewProps) {
   const [section, setSection] = useState<AdminSection>('overview');
 
-  const [users, setUsers] = useState<UserProfile[]>([]);
   const [voices, setVoices] = useState<VoiceProfile[]>([]);
   const [audios, setAudios] = useState<GeneratedAudio[]>([]);
   const [engineStatus, setEngineStatus] = useState<AdminEngineStatus | null>(null);
@@ -76,10 +50,6 @@ export function AdminPanelView({
   const [loadingData, setLoadingData] = useState(true);
   const [dataError, setDataError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
-
-  // User filter state
-  const [userSearch, setUserSearch] = useState('');
-  const [userFilter, setUserFilter] = useState<'all' | 'admin' | 'active' | 'suspended'>('all');
 
   // Studio config form state
   const [ttsEnabled, setTtsEnabled] = useState(studioConfig.ttsEnabled);
@@ -107,25 +77,14 @@ export function AdminPanelView({
     setAnnouncement(studioConfig.announcement || '');
   }, [studioConfig]);
 
-  const loadAllAdminData = async () => {
+  const loadStudioData = async () => {
     setLoadingData(true);
     setDataError(null);
     setEngineError(null);
 
     try {
-      const [userList, voiceList, audioList] = await Promise.all([
-        adminFetchUsers(),
-        adminFetchAllVoices(),
-        adminFetchAllAudios(),
-      ]);
-      setUsers(userList);
-      setVoices(voiceList);
-      setAudios(audioList);
-    } catch (err) {
-      setDataError(err instanceof Error ? err.message : 'Unable to load admin records.');
-    }
-
-    try {
+      setVoices(fetchAllVoices());
+      setAudios(fetchAllAudios());
       const status = await apiGetAdminEngineStatus();
       setEngineStatus(status);
     } catch (err) {
@@ -136,103 +95,29 @@ export function AdminPanelView({
   };
 
   useEffect(() => {
-    void loadAllAdminData();
+    void loadStudioData();
   }, []);
-
-  const userById = useMemo(() => {
-    const map = new Map<string, UserProfile>();
-    for (const u of users) map.set(u.uid, u);
-    return map;
-  }, [users]);
-
-  const stats = useMemo(() => {
-    const activeCount = users.filter((u) => u.status === 'active').length;
-    const suspendedCount = users.filter((u) => u.status === 'suspended').length;
-    const adminCount = users.filter((u) => u.role === 'admin').length;
-    return {
-      totalUsers: users.length,
-      activeCount,
-      suspendedCount,
-      adminCount,
-      totalVoices: voices.length,
-      totalAudios: audios.length,
-    };
-  }, [users, voices, audios]);
-
-  const filteredUsers = useMemo(() => {
-    const q = userSearch.trim().toLowerCase();
-    return users.filter((u) => {
-      if (userFilter === 'admin' && u.role !== 'admin') return false;
-      if (userFilter === 'active' && u.status !== 'active') return false;
-      if (userFilter === 'suspended' && u.status !== 'suspended') return false;
-      if (!q) return true;
-      return (
-        u.email.toLowerCase().includes(q) ||
-        u.displayName.toLowerCase().includes(q) ||
-        u.uid.toLowerCase().includes(q)
-      );
-    });
-  }, [users, userSearch, userFilter]);
 
   const filteredVoices = useMemo(() => {
     const q = librarySearch.trim().toLowerCase();
     if (!q) return voices;
-    return voices.filter((v) => {
-      const owner = userById.get(v.userId);
-      return (
+    return voices.filter(
+      (v) =>
         v.name.toLowerCase().includes(q) ||
-        (owner?.email || '').toLowerCase().includes(q) ||
-        (owner?.displayName || '').toLowerCase().includes(q)
-      );
-    });
-  }, [voices, librarySearch, userById]);
+        v.pitchRegister.toLowerCase().includes(q) ||
+        v.language.toLowerCase().includes(q)
+    );
+  }, [voices, librarySearch]);
 
   const filteredAudios = useMemo(() => {
     const q = librarySearch.trim().toLowerCase();
     if (!q) return audios;
-    return audios.filter((a) => {
-      const owner = userById.get(a.userId);
-      return (
+    return audios.filter(
+      (a) =>
         (a.title || a.text).toLowerCase().includes(q) ||
-        a.voiceName.toLowerCase().includes(q) ||
-        (owner?.email || '').toLowerCase().includes(q)
-      );
-    });
-  }, [audios, librarySearch, userById]);
-
-  const handleToggleStatus = async (target: UserProfile) => {
-    const nextStatus = target.status === 'active' ? 'suspended' : 'active';
-    setBusyId(`status-${target.uid}`);
-    setDataError(null);
-    try {
-      await adminSetUserStatus(target.uid, nextStatus);
-      setUsers((prev) =>
-        prev.map((u) => (u.uid === target.uid ? { ...u, status: nextStatus } : u))
-      );
-    } catch (err) {
-      setDataError(err instanceof Error ? err.message : 'Failed to update user status.');
-    } finally {
-      setBusyId(null);
-    }
-  };
-
-  const handleToggleAdminRole = async (target: UserProfile) => {
-    const makeAdmin = target.role !== 'admin';
-    setBusyId(`role-${target.uid}`);
-    setDataError(null);
-    try {
-      await adminSetUserAdminRole(target, makeAdmin, currentUser.uid);
-      setUsers((prev) =>
-        prev.map((u) =>
-          u.uid === target.uid ? { ...u, role: makeAdmin ? 'admin' : 'user' } : u
-        )
-      );
-    } catch (err) {
-      setDataError(err instanceof Error ? err.message : 'Failed to update user role.');
-    } finally {
-      setBusyId(null);
-    }
-  };
+        a.voiceName.toLowerCase().includes(q)
+    );
+  }, [audios, librarySearch]);
 
   const handleSaveConfig = async (e: FormEvent) => {
     e.preventDefault();
@@ -240,17 +125,14 @@ export function AdminPanelView({
     setConfigError(null);
     setConfigSaved(false);
     try {
-      await adminSaveStudioConfig(
-        {
-          ttsEnabled,
-          voiceCloningEnabled,
-          maxTextLength,
-          defaultLanguage,
-          defaultFormat,
-          announcement: announcement.trim(),
-        },
-        currentUser.uid
-      );
+      await saveStudioConfig({
+        ttsEnabled,
+        voiceCloningEnabled,
+        maxTextLength,
+        defaultLanguage,
+        defaultFormat,
+        announcement: announcement.trim(),
+      });
       setConfigSaved(true);
       window.setTimeout(() => setConfigSaved(false), 3000);
     } catch (err) {
@@ -295,7 +177,7 @@ export function AdminPanelView({
 
   return (
     <div className="min-h-screen bg-[#080D1C] text-white flex flex-col">
-      {/* Top Admin Bar */}
+      {/* Top Studio Console Bar */}
       <header className="sticky top-0 z-30 h-14 bg-[#080D1C]/95 backdrop-blur-md border-b border-white/10">
         <div className="max-w-7xl mx-auto h-full px-4 sm:px-6 flex items-center justify-between gap-3">
           <div className="flex items-center gap-3 min-w-0">
@@ -314,60 +196,44 @@ export function AdminPanelView({
               />
             </a>
             <div className="flex items-center gap-1.5 text-sm font-semibold text-white truncate">
-              <Shield className="w-4 h-4 text-[#9333EA] shrink-0" />
-              <span className="truncate">Admin Console</span>
+              <Sliders className="w-4 h-4 text-[#9333EA] shrink-0" />
+              <span className="truncate">Studio Console</span>
             </div>
           </div>
 
           <div className="flex items-center gap-2 shrink-0">
             <a
               href="/app"
-              className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[38px] rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-xs font-semibold text-white transition-colors whitespace-nowrap"
+              className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[38px] rounded-xl bg-gradient-to-r from-[#2563EB] to-[#9333EA] text-xs font-semibold text-white hover:opacity-95 transition-opacity whitespace-nowrap"
             >
               <span>Open Studio</span>
               <ArrowUpRight className="w-3.5 h-3.5" />
             </a>
-
-            <button
-              type="button"
-              onClick={() => void onSignOut()}
-              className="inline-flex items-center gap-1.5 px-3 py-2 min-h-[38px] rounded-xl bg-white/5 hover:bg-red-500/15 border border-white/10 hover:border-red-500/30 text-xs font-medium text-[#A5B4CC] hover:text-red-200 transition-colors whitespace-nowrap cursor-pointer"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              <span className="hidden sm:inline">Sign Out</span>
-            </button>
           </div>
         </div>
       </header>
 
       {/* Main Container */}
       <main className="flex-1 w-full max-w-7xl mx-auto px-4 sm:px-6 py-6 space-y-6">
-        {/* Header & Signed-in Identity */}
         <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 border-b border-white/10 pb-5">
           <div>
             <h1 className="font-display text-2xl font-bold tracking-tight text-white">
-              Platform Administration
+              Studio Engine &amp; Controls
             </h1>
             <p className="text-sm text-[#A5B4CC] mt-1">
-              Manage registered Google users, voice generator limits, cloned voices, and API status.
+              Inspect Gemini API engine readiness, customize voice generator defaults, and manage local clips.
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
-            <div className="text-right hidden sm:block">
-              <div className="text-xs font-semibold text-white">{currentUser.displayName}</div>
-              <div className="text-[11px] text-[#A5B4CC]">{currentUser.email}</div>
-            </div>
-            <button
-              type="button"
-              onClick={() => void loadAllAdminData()}
-              disabled={loadingData}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 min-h-[40px] rounded-xl bg-[#111A2E] border border-white/10 hover:border-white/25 text-xs font-semibold text-white transition-colors whitespace-nowrap cursor-pointer"
-            >
-              <RefreshCw className={`w-3.5 h-3.5 ${loadingData ? 'animate-spin' : ''}`} />
-              <span>Refresh Data</span>
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => void loadStudioData()}
+            disabled={loadingData}
+            className="inline-flex items-center gap-1.5 px-3.5 py-2 min-h-[40px] rounded-xl bg-[#111A2E] border border-white/10 hover:border-white/25 text-xs font-semibold text-white transition-colors whitespace-nowrap cursor-pointer self-start sm:self-auto"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loadingData ? 'animate-spin' : ''}`} />
+            <span>Refresh Status</span>
+          </button>
         </div>
 
         {/* Section Sub-Navigation */}
@@ -375,11 +241,10 @@ export function AdminPanelView({
           {(
             [
               { id: 'overview', label: 'Overview & API', icon: Activity },
-              { id: 'users', label: `Users (${stats.totalUsers})`, icon: Users },
               { id: 'generator', label: 'Voice Generator', icon: Sliders },
               {
                 id: 'library',
-                label: `Voices & Audio (${stats.totalVoices + stats.totalAudios})`,
+                label: `Voices & Audio (${voices.length + audios.length})`,
                 icon: Volume2,
               },
             ] as const
@@ -413,29 +278,17 @@ export function AdminPanelView({
         {/* TAB 1: OVERVIEW & SERVER API STATUS */}
         {section === 'overview' && (
           <div className="space-y-6">
-            <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="bg-[#111A2E] border border-white/10 rounded-2xl p-5">
-                <div className="text-xs font-medium text-[#A5B4CC]">Registered Users</div>
-                <div className="mt-2 text-3xl font-bold font-mono tabular-nums text-white">
-                  {stats.totalUsers}
-                </div>
-                <div className="mt-1 text-xs text-[#A5B4CC] tabular-nums">
-                  {stats.adminCount} admin · {stats.suspendedCount} suspended
-                </div>
+                <div className="text-xs font-medium text-[#A5B4CC]">Access Mode</div>
+                <div className="mt-2 text-2xl font-bold text-emerald-400">Open Studio</div>
+                <div className="mt-1 text-xs text-[#A5B4CC]">No login or registration required</div>
               </div>
 
               <div className="bg-[#111A2E] border border-white/10 rounded-2xl p-5">
-                <div className="text-xs font-medium text-[#A5B4CC]">Active Accounts</div>
-                <div className="mt-2 text-3xl font-bold font-mono tabular-nums text-emerald-400">
-                  {stats.activeCount}
-                </div>
-                <div className="mt-1 text-xs text-[#A5B4CC]">Google Sign-In verified</div>
-              </div>
-
-              <div className="bg-[#111A2E] border border-white/10 rounded-2xl p-5">
-                <div className="text-xs font-medium text-[#A5B4CC]">Cloned Voices</div>
+                <div className="text-xs font-medium text-[#A5B4CC]">Saved Voices</div>
                 <div className="mt-2 text-3xl font-bold font-mono tabular-nums text-white">
-                  {stats.totalVoices}
+                  {voices.length}
                 </div>
                 <div className="mt-1 text-xs text-[#A5B4CC]">
                   Cloning {studioConfig.voiceCloningEnabled ? 'enabled' : 'paused'}
@@ -445,7 +298,7 @@ export function AdminPanelView({
               <div className="bg-[#111A2E] border border-white/10 rounded-2xl p-5">
                 <div className="text-xs font-medium text-[#A5B4CC]">Generated Audio Clips</div>
                 <div className="mt-2 text-3xl font-bold font-mono tabular-nums text-white">
-                  {stats.totalAudios}
+                  {audios.length}
                 </div>
                 <div className="mt-1 text-xs text-[#A5B4CC]">
                   Generator {studioConfig.ttsEnabled ? 'enabled' : 'paused'}
@@ -462,7 +315,7 @@ export function AdminPanelView({
                   </div>
                   <div>
                     <h2 className="text-base font-bold text-white">
-                      Server API Key & Synthesis Engine
+                      Server API Key &amp; Synthesis Engine
                     </h2>
                     <p className="text-xs text-[#A5B4CC]">
                       Live server-side check (keys stay strictly in server environment variables).
@@ -527,183 +380,15 @@ export function AdminPanelView({
               )}
 
               <div className="p-4 rounded-xl bg-[#080D1C] border border-white/10 text-xs text-[#A5B4CC] leading-relaxed">
-                For security, <code className="text-white">GEMINI_API_KEY</code> is never stored in
-                the database or exposed in browser inputs. To update or rotate your key on Vercel,
-                open <strong className="text-white">Vercel Dashboard → Project Settings → Environment Variables</strong>,
-                set <code className="text-white">GEMINI_API_KEY</code>, and redeploy.
+                For Vercel hosting, only <code className="text-white">GEMINI_API_KEY</code> is required
+                in <strong className="text-white">Vercel Dashboard → Project Settings → Environment Variables</strong>.
+                No Firebase Auth, OAuth Client ID, or Login setup is required.
               </div>
             </div>
           </div>
         )}
 
-        {/* TAB 2: USER MANAGEMENT */}
-        {section === 'users' && (
-          <div className="bg-[#111A2E] border border-white/10 rounded-2xl p-5 sm:p-6 space-y-4">
-            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div className="relative flex-1 max-w-md">
-                <Search className="w-4 h-4 text-[#A5B4CC] absolute left-3.5 top-1/2 -translate-y-1/2" />
-                <input
-                  type="text"
-                  value={userSearch}
-                  onChange={(e) => setUserSearch(e.target.value)}
-                  placeholder="Search users by name or Google email..."
-                  className="w-full pl-10 pr-4 py-2.5 text-sm rounded-xl border border-white/10 bg-[#080D1C] text-white placeholder:text-[#A5B4CC]/60 focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
-                />
-              </div>
-
-              <div className="grid grid-cols-4 sm:inline-grid gap-1 p-1 bg-[#080D1C] border border-white/10 rounded-xl">
-                {(
-                  [
-                    { id: 'all', label: 'All' },
-                    { id: 'admin', label: 'Admins' },
-                    { id: 'active', label: 'Active' },
-                    { id: 'suspended', label: 'Suspended' },
-                  ] as const
-                ).map((opt) => (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    onClick={() => setUserFilter(opt.id)}
-                    className={`px-3 py-1.5 text-xs font-medium rounded-lg transition-colors whitespace-nowrap cursor-pointer ${
-                      userFilter === opt.id
-                        ? 'bg-[#2563EB] text-white'
-                        : 'text-[#A5B4CC] hover:text-white'
-                    }`}
-                  >
-                    {opt.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {filteredUsers.length === 0 ? (
-              <div className="py-10 text-center text-sm text-[#A5B4CC]">
-                No users match the current search or filter.
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-white/10 text-[11px] font-semibold uppercase tracking-wider text-[#A5B4CC]">
-                      <th className="py-3 pr-4">User</th>
-                      <th className="py-3 px-3">Role</th>
-                      <th className="py-3 px-3">Status</th>
-                      <th className="py-3 px-3">Joined</th>
-                      <th className="py-3 pl-3 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-white/10 text-sm">
-                    {filteredUsers.map((u) => {
-                      const isSelf = u.uid === currentUser.uid;
-                      const isBootstrappedOwner =
-                        u.email.toLowerCase() === BOOTSTRAPPED_ADMIN_EMAIL;
-                      const locked = isSelf || isBootstrappedOwner;
-
-                      return (
-                        <tr key={u.uid} className="hover:bg-white/[0.02]">
-                          <td className="py-3.5 pr-4">
-                            <div className="flex items-center gap-3 min-w-0">
-                              {u.photoURL ? (
-                                <img
-                                  src={u.photoURL}
-                                  alt={u.displayName}
-                                  referrerPolicy="no-referrer"
-                                  className="w-8 h-8 rounded-full object-cover shrink-0 border border-white/10"
-                                />
-                              ) : (
-                                <div className="w-8 h-8 rounded-full bg-blue-600/25 border border-blue-500/30 flex items-center justify-center text-xs font-bold text-blue-300 shrink-0">
-                                  {u.displayName.charAt(0).toUpperCase()}
-                                </div>
-                              )}
-                              <div className="min-w-0">
-                                <div className="font-semibold text-white truncate">
-                                  {u.displayName}
-                                  {isSelf && (
-                                    <span className="ml-1.5 text-[11px] font-normal text-[#A5B4CC]">
-                                      (You)
-                                    </span>
-                                  )}
-                                </div>
-                                <div className="text-xs text-[#A5B4CC] truncate">{u.email}</div>
-                              </div>
-                            </div>
-                          </td>
-
-                          <td className="py-3.5 px-3 whitespace-nowrap">
-                            <span
-                              className={`text-xs font-semibold ${
-                                u.role === 'admin' ? 'text-purple-400' : 'text-[#A5B4CC]'
-                              }`}
-                            >
-                              {u.role === 'admin' ? 'Admin' : 'User'}
-                            </span>
-                          </td>
-
-                          <td className="py-3.5 px-3 whitespace-nowrap">
-                            <span
-                              className={`text-xs font-semibold ${
-                                u.status === 'active' ? 'text-emerald-400' : 'text-red-400'
-                              }`}
-                            >
-                              {u.status === 'active' ? 'Active' : 'Suspended'}
-                            </span>
-                          </td>
-
-                          <td className="py-3.5 px-3 whitespace-nowrap text-xs text-[#A5B4CC] tabular-nums">
-                            {formatDate(u.createdAt)}
-                          </td>
-
-                          <td className="py-3.5 pl-3 text-right whitespace-nowrap">
-                            {locked ? (
-                              <span className="text-xs text-[#A5B4CC]/70">Protected</span>
-                            ) : (
-                              <div className="inline-flex items-center gap-2">
-                                <button
-                                  type="button"
-                                  disabled={busyId !== null}
-                                  onClick={() => void handleToggleAdminRole(u)}
-                                  className="inline-flex items-center gap-1 px-2.5 py-1.5 min-h-[34px] rounded-lg border border-white/10 bg-[#080D1C] hover:border-purple-400/50 text-xs font-medium text-white disabled:opacity-50 cursor-pointer"
-                                >
-                                  <Shield className="w-3.5 h-3.5 text-purple-400" />
-                                  {u.role === 'admin' ? 'Remove Admin' : 'Make Admin'}
-                                </button>
-
-                                <button
-                                  type="button"
-                                  disabled={busyId !== null}
-                                  onClick={() => void handleToggleStatus(u)}
-                                  className={`inline-flex items-center gap-1 px-2.5 py-1.5 min-h-[34px] rounded-lg border text-xs font-medium disabled:opacity-50 cursor-pointer ${
-                                    u.status === 'active'
-                                      ? 'border-red-500/30 bg-red-500/10 text-red-300 hover:bg-red-500/20'
-                                      : 'border-emerald-500/30 bg-emerald-500/10 text-emerald-300 hover:bg-emerald-500/20'
-                                  }`}
-                                >
-                                  {u.status === 'active' ? (
-                                    <>
-                                      <UserX className="w-3.5 h-3.5" />
-                                      Suspend
-                                    </>
-                                  ) : (
-                                    <>
-                                      <UserCheck className="w-3.5 h-3.5" />
-                                      Activate
-                                    </>
-                                  )}
-                                </button>
-                              </div>
-                            )}
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* TAB 3: VOICE GENERATOR CONTROLS */}
+        {/* TAB 2: VOICE GENERATOR CONTROLS */}
         {section === 'generator' && (
           <form
             onSubmit={handleSaveConfig}
@@ -711,10 +396,10 @@ export function AdminPanelView({
           >
             <div>
               <h2 className="text-base font-bold text-white">
-                Voice Generator & Cloning Controls
+                Voice Generator &amp; Cloning Controls
               </h2>
               <p className="text-xs text-[#A5B4CC] mt-1">
-                Changes apply immediately for all signed-in VoiceCraft users.
+                Configure speech generation limits, default export preferences, and studio banner notices.
               </p>
             </div>
 
@@ -723,7 +408,7 @@ export function AdminPanelView({
                 <div>
                   <div className="text-sm font-semibold text-white">Voice Generator (TTS)</div>
                   <div className="text-xs text-[#A5B4CC] mt-0.5">
-                    Allow members to synthesize speech from text.
+                    Allow speech synthesis in the studio.
                   </div>
                 </div>
                 <input
@@ -738,7 +423,7 @@ export function AdminPanelView({
                 <div>
                   <div className="text-sm font-semibold text-white">Voice Cloning</div>
                   <div className="text-xs text-[#A5B4CC] mt-0.5">
-                    Allow members to analyze and clone new voices.
+                    Allow analyzing and cloning new voice profiles.
                   </div>
                 </div>
                 <input
@@ -821,7 +506,7 @@ export function AdminPanelView({
                 maxLength={300}
                 value={announcement}
                 onChange={(e) => setAnnouncement(e.target.value)}
-                placeholder="e.g. Scheduled maintenance tonight at 11 PM..."
+                placeholder="e.g. Bangla & English neural synthesis active..."
                 className="w-full px-3.5 py-2.5 text-sm rounded-xl border border-white/10 bg-[#080D1C] text-white placeholder:text-[#A5B4CC]/50 focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
               />
             </div>
@@ -854,7 +539,7 @@ export function AdminPanelView({
           </form>
         )}
 
-        {/* TAB 4: VOICES & AUDIO LIBRARY MODERATION */}
+        {/* TAB 3: VOICES & AUDIO LIBRARY */}
         {section === 'library' && (
           <div className="bg-[#111A2E] border border-white/10 rounded-2xl p-5 sm:p-6 space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
@@ -869,7 +554,7 @@ export function AdminPanelView({
                   }`}
                 >
                   <Mic className="w-3.5 h-3.5" />
-                  <span>Cloned Voices ({voices.length})</span>
+                  <span>Saved Voices ({voices.length})</span>
                 </button>
                 <button
                   type="button"
@@ -891,7 +576,7 @@ export function AdminPanelView({
                   type="text"
                   value={librarySearch}
                   onChange={(e) => setLibrarySearch(e.target.value)}
-                  placeholder="Search by voice, clip title, or owner email..."
+                  placeholder="Search by voice or clip title..."
                   className="w-full pl-10 pr-4 py-2.5 text-sm rounded-xl border border-white/10 bg-[#080D1C] text-white placeholder:text-[#A5B4CC]/60 focus:outline-none focus:ring-2 focus:ring-[#2563EB]"
                 />
               </div>
@@ -900,39 +585,33 @@ export function AdminPanelView({
             {libraryTab === 'voices' ? (
               filteredVoices.length === 0 ? (
                 <div className="py-10 text-center text-sm text-[#A5B4CC]">
-                  No cloned voice profiles found.
+                  No voice profiles found.
                 </div>
               ) : (
                 <div className="divide-y divide-white/10">
-                  {filteredVoices.map((v) => {
-                    const owner = userById.get(v.userId);
-                    return (
-                      <div
-                        key={v.id}
-                        className="py-3.5 flex items-center justify-between gap-4"
-                      >
-                        <div className="min-w-0">
-                          <div className="text-sm font-semibold text-white truncate">{v.name}</div>
-                          <div className="text-xs text-[#A5B4CC] truncate">
-                            Owner: {owner?.email || v.userId} · {v.pitchRegister} · {v.language}
-                          </div>
+                  {filteredVoices.map((v) => (
+                    <div key={v.id} className="py-3.5 flex items-center justify-between gap-4">
+                      <div className="min-w-0">
+                        <div className="text-sm font-semibold text-white truncate">{v.name}</div>
+                        <div className="text-xs text-[#A5B4CC] truncate">
+                          {v.pitchRegister} · {v.language} · {v.sourceType}
                         </div>
-                        <button
-                          type="button"
-                          onClick={() => void handleDeleteVoice(v)}
-                          disabled={busyId !== null}
-                          aria-label={`Delete voice ${v.name}`}
-                          className="min-w-[38px] min-h-[38px] flex items-center justify-center rounded-xl text-[#A5B4CC] hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer shrink-0"
-                        >
-                          {busyId === `voice-${v.id}` ? (
-                            <Loader2 className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <Trash2 className="w-4 h-4" />
-                          )}
-                        </button>
                       </div>
-                    );
-                  })}
+                      <button
+                        type="button"
+                        onClick={() => void handleDeleteVoice(v)}
+                        disabled={busyId !== null}
+                        aria-label={`Delete voice ${v.name}`}
+                        className="min-w-[38px] min-h-[38px] flex items-center justify-center rounded-xl text-[#A5B4CC] hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer shrink-0"
+                      >
+                        {busyId === `voice-${v.id}` ? (
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                  ))}
                 </div>
               )
             ) : filteredAudios.length === 0 ? (
@@ -941,39 +620,33 @@ export function AdminPanelView({
               </div>
             ) : (
               <div className="divide-y divide-white/10">
-                {filteredAudios.map((a) => {
-                  const owner = userById.get(a.userId);
-                  return (
-                    <div
-                      key={a.id}
-                      className="py-3.5 flex items-center justify-between gap-4"
-                    >
-                      <div className="min-w-0">
-                        <div className="text-sm font-semibold text-white truncate">
-                          {a.title || a.text.slice(0, 60)}
-                        </div>
-                        <div className="text-xs text-[#A5B4CC] truncate">
-                          Owner: {owner?.email || a.userId} · Voice: {a.voiceName} ·{' '}
-                          <span className="font-mono tabular-nums">{a.durationSec}s</span> ·{' '}
-                          {a.format.toUpperCase()}
-                        </div>
+                {filteredAudios.map((a) => (
+                  <div key={a.id} className="py-3.5 flex items-center justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="text-sm font-semibold text-white truncate">
+                        {a.title || a.text.slice(0, 60)}
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => void handleDeleteAudio(a)}
-                        disabled={busyId !== null}
-                        aria-label={`Delete audio ${a.title || a.id}`}
-                        className="min-w-[38px] min-h-[38px] flex items-center justify-center rounded-xl text-[#A5B4CC] hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer shrink-0"
-                      >
-                        {busyId === `audio-${a.id}` ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Trash2 className="w-4 h-4" />
-                        )}
-                      </button>
+                      <div className="text-xs text-[#A5B4CC] truncate">
+                        Voice: {a.voiceName} ·{' '}
+                        <span className="font-mono tabular-nums">{a.durationSec}s</span> ·{' '}
+                        {a.format.toUpperCase()}
+                      </div>
                     </div>
-                  );
-                })}
+                    <button
+                      type="button"
+                      onClick={() => void handleDeleteAudio(a)}
+                      disabled={busyId !== null}
+                      aria-label={`Delete audio ${a.title || a.id}`}
+                      className="min-w-[38px] min-h-[38px] flex items-center justify-center rounded-xl text-[#A5B4CC] hover:text-red-400 hover:bg-red-500/10 transition-colors cursor-pointer shrink-0"
+                    >
+                      {busyId === `audio-${a.id}` ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <Trash2 className="w-4 h-4" />
+                      )}
+                    </button>
+                  </div>
+                ))}
               </div>
             )}
           </div>

@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { useState } from 'react';
 import { apiDeleteAudioFile, triggerAuthorizedDownload } from '../lib/api';
-import { deleteGeneratedAudioDoc, recordAudioDownload } from '../lib/firebase';
+import { deleteGeneratedAudioDoc, recordAudioDownload } from '../lib/studioStore';
 import type {
   ActiveAudioTrack,
   AudioFormat,
@@ -28,9 +28,9 @@ interface HomeViewProps {
   defaultFormat: AudioFormat;
 }
 
-function formatGeneratedDate(ts: { toDate?: () => Date } | undefined): string {
-  if (!ts?.toDate) return 'Just now';
-  return ts.toDate().toLocaleString([], {
+function formatGeneratedDate(ts: number | undefined): string {
+  if (!ts) return 'Just now';
+  return new Date(ts).toLocaleString([], {
     year: 'numeric',
     month: 'short',
     day: 'numeric',
@@ -200,7 +200,7 @@ export function HomeView({
             </h2>
             <p className="text-sm text-slate-500 dark:text-slate-400 max-w-md mx-auto">
               Tap the <span className="font-semibold text-blue-600 dark:text-blue-400">+</span>{' '}
-              button below to generate speech, or open Settings to clone your personal voice first.
+              button below to generate speech, or open Profile → My Voice Clone to create your personal voice first.
             </p>
           </div>
           <button

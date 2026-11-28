@@ -74,6 +74,184 @@
         "updatedAt"
       ]
     },
+    "UserSettings": {
+      "title": "UserSettings",
+      "description": "Per-user VoiceCraft Settings covering default voice, language, generation, and audio playback preferences.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "defaultVoiceId": {
+          "type": "string",
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "defaultLanguage": {
+          "type": "string",
+          "enum": ["en", "bn", "bilingual"]
+        },
+        "defaultSpeed": {
+          "type": "number"
+        },
+        "defaultPitch": {
+          "type": "number"
+        },
+        "defaultFormat": {
+          "type": "string",
+          "enum": ["wav", "mp3"]
+        },
+        "autoPlayAfterGenerate": {
+          "type": "boolean"
+        },
+        "playbackSpeed": {
+          "type": "number"
+        },
+        "themePreference": {
+          "type": "string",
+          "enum": ["light", "dark"]
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "defaultLanguage",
+        "defaultSpeed",
+        "defaultPitch",
+        "defaultFormat",
+        "autoPlayAfterGenerate",
+        "playbackSpeed",
+        "themePreference",
+        "updatedAt"
+      ]
+    },
+    "AccountInfo": {
+      "title": "AccountInfo",
+      "description": "Firebase Authentication metadata synced for the signed-in user's Account Information panel.",
+      "type": "object",
+      "properties": {
+        "uid": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "displayName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "email": {
+          "type": "string",
+          "maxLength": 256
+        },
+        "photoURL": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "emailVerified": {
+          "type": "boolean"
+        },
+        "providerId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "accountCreatedAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "lastSignInAt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "updatedAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "uid",
+        "displayName",
+        "email",
+        "emailVerified",
+        "providerId",
+        "accountCreatedAt",
+        "lastSignInAt",
+        "updatedAt"
+      ]
+    },
+    "VoiceSample": {
+      "title": "VoiceSample",
+      "description": "Secure reference record linking a user's uploaded or recorded audio sample to their cloned voice profile.",
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "userId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "voiceId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "sampleAudioId": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 128,
+          "pattern": "^[a-zA-Z0-9_\\-]+$"
+        },
+        "storagePath": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        },
+        "sourceType": {
+          "type": "string",
+          "enum": ["microphone", "upload"]
+        },
+        "mimeType": {
+          "type": "string",
+          "minLength": 3,
+          "maxLength": 64
+        },
+        "durationSec": {
+          "type": "number"
+        },
+        "createdAt": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "required": [
+        "id",
+        "userId",
+        "voiceId",
+        "sampleAudioId",
+        "storagePath",
+        "sourceType",
+        "mimeType",
+        "durationSec",
+        "createdAt"
+      ]
+    },
     "AdminEntry": {
       "title": "AdminEntry",
       "description": "Trusted admin role assignment record.",
@@ -164,7 +342,7 @@
     },
     "VoiceProfile": {
       "title": "VoiceProfile",
-      "description": "Personal AI cloned voice profile with ownership verification and acoustic DNA.",
+      "description": "Personal AI cloned voice profile with ownership verification, processing status, and acoustic DNA.",
       "type": "object",
       "properties": {
         "id": {
@@ -183,6 +361,10 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 80
+        },
+        "status": {
+          "type": "string",
+          "enum": ["not_created", "sample_added", "processing", "ready", "failed"]
         },
         "language": {
           "type": "string",
@@ -463,6 +645,18 @@
       "schema": { "$ref": "#/entities/UserProfile" },
       "description": "Authenticated user profile, RBAC role, account status, and default studio preferences."
     },
+    "/settings/{userId}": {
+      "schema": { "$ref": "#/entities/UserSettings" },
+      "description": "User-scoped VoiceCraft Settings (default voice, language, generation, and audio playback settings)."
+    },
+    "/accountInfo/{userId}": {
+      "schema": { "$ref": "#/entities/AccountInfo" },
+      "description": "User-scoped Google Account metadata synchronized from Firebase Authentication."
+    },
+    "/voiceSamples/{sampleId}": {
+      "schema": { "$ref": "#/entities/VoiceSample" },
+      "description": "User-scoped secure references for voice sample audio files linked to cloned voice profiles."
+    },
     "/admins/{adminUid}": {
       "schema": { "$ref": "#/entities/AdminEntry" },
       "description": "Trusted admin role assignment documents."
@@ -477,7 +671,7 @@
     },
     "/voiceProfiles/{voiceId}": {
       "schema": { "$ref": "#/entities/VoiceProfile" },
-      "description": "Owner-scoped cloned AI voice profiles with verified voice ownership."
+      "description": "Owner-scoped cloned AI voice profiles with verified voice ownership and processing status."
     },
     "/generatedAudios/{audioId}": {
       "schema": { "$ref": "#/entities/GeneratedAudio" },

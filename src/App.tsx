@@ -1,77 +1,59 @@
-import { onAuthStateChanged, type User } from 'firebase/auth';
-import { collection, doc, onSnapshot, query, where } from 'firebase/firestore';
 import {
-  AlertTriangle,
   Home,
-  Loader2,
-  LogOut,
   Moon,
   Plus,
-  Settings,
-  Shield,
+  Sliders,
   Sun,
+  User as UserIcon,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { AdminPanelView } from './components/AdminPanelView';
-import { AuthGate } from './components/AuthGate';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { HomeView } from './components/HomeView';
 import { LandingPage } from './components/LandingPage';
 import { LegalPage } from './components/LegalPage';
-import { SettingsAndCloneView } from './components/SettingsAndCloneView';
+import { ProfileView } from './components/ProfileView';
 import { StudioAudioPlayer } from './components/StudioAudioPlayer';
 import { TtsStudioView } from './components/TtsStudioView';
 import {
-  auth,
-  db,
   DEFAULT_STUDIO_CONFIG,
-  ensureAuthenticatedUserProfile,
-  handleFirestoreError,
-  OperationType,
-  signOutUser,
+  getWorkspaceId,
+  loadStudioConfig,
+  loadUserSettings,
+  subscribeGeneratedAudios,
   subscribeStudioConfig,
+  subscribeUserSettings,
+  subscribeVoices,
   updateUserSettings,
-} from './lib/firebase';
+} from './lib/studioStore';
 import type {
   ActiveAudioTrack,
   GeneratedAudio,
+  ProfileSection,
   StudioConfig,
   StudioTab,
   ThemeMode,
-  UserProfile,
+  UserSettings,
   VoiceProfile,
 } from './types/studio';
 
-interface MobileStudioAppProps {
-  firebaseUser: User;
-  initialProfile: UserProfile;
-  isAdmin: boolean;
-  studioConfig: StudioConfig;
-  onSignOut: () => Promise<void>;
-}
-
-function MobileStudioApp({
-  firebaseUser,
-  initialProfile,
-  isAdmin,
-  studioConfig,
-  onSignOut,
-}: MobileStudioAppProps) {
-  const userId = firebaseUser.uid;
-  const [userProfile, setUserProfile] = useState<UserProfile>(initialProfile);
+function MobileStudioApp({ studioConfig }: { studioConfig: StudioConfig }) {
+  const userId = getWorkspaceId();
+  const [userSettings, setUserSettings] = useState<UserSettings>(() => loadUserSettings());
   const [voices, setVoices] = useState<VoiceProfile[]>([]);
   const [generatedAudios, setGeneratedAudios] = useState<GeneratedAudio[]>([]);
 
   const [activeTab, setActiveTab] = useState<StudioTab>('home');
-  const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(null);
+  const [profileSection, setProfileSection] = useState<ProfileSection>('settings');
+  const [selectedVoiceId, setSelectedVoiceId] = useState<string | null>(
+    () => loadUserSettings().defaultVoiceId || null
+  );
   const [activeTrack, setActiveTrack] = useState<ActiveAudioTrack | null>(null);
 
   const [theme, setTheme] = useState<ThemeMode>(() => {
-    if (
-      initialProfile.themePreference === 'dark' ||
-      initialProfile.themePreference === 'light'
-    ) {
-      return initialProfile.themePreference;
+    const pref = loadUserSettings().themePreference;
+    if (pref === 'dark' || pref === 'light') {
+      return pref;
     }
     try {
       const saved = window.localStorage.getItem('voicecraft-theme');
@@ -97,66 +79,41 @@ function MobileStudioApp({
 
   const handleSetTheme = (nextTheme: ThemeMode) => {
     setTheme(nextTheme);
-    void updateUserSettings(userId, { themePreference: nextTheme }).catch(() => undefined);
+    void updateUserSettings({ themePreference: nextTheme });
   };
 
   useEffect(() => {
-    const unsubUser = onSnapshot(
-      doc(db, 'users', userId),
-      (snap) => {
-        if (snap.exists()) {
-          setUserProfile(snap.data() as UserProfile);
-        }
-      },
-      (err) => handleFirestoreError(err, OperationType.GET, `users/${userId}`)
-    );
-
-    const voicesQuery = query(
-      collection(db, 'voiceProfiles'),
-      where('userId', '==', userId)
-    );
-    const unsubVoices = onSnapshot(
-      voicesQuery,
-      (snap) => {
-        const list = snap.docs
-          .map((d) => d.data() as VoiceProfile)
-          .sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
-        setVoices(list);
-        if (list.length > 0 && !selectedVoiceId) {
-          setSelectedVoiceId(list[0].id);
-        }
-      },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'voiceProfiles')
-    );
-
-    const genQuery = query(
-      collection(db, 'generatedAudios'),
-      where('userId', '==', userId)
-    );
-    const unsubGen = onSnapshot(
-      genQuery,
-      (snap) => {
-        const list = snap.docs
-          .map((d) => d.data() as GeneratedAudio)
-          .sort((a, b) => (b.createdAt?.toMillis?.() ?? 0) - (a.createdAt?.toMillis?.() ?? 0));
-        setGeneratedAudios(list);
-      },
-      (err) => handleFirestoreError(err, OperationType.LIST, 'generatedAudios')
-    );
+    const unsubSettings = subscribeUserSettings(setUserSettings);
+    const unsubVoices = subscribeVoices((list) => {
+      setVoices(list);
+      if (list.length > 0) {
+        setSelectedVoiceId((current) => {
+          if (current && list.some((v) => v.id === current)) return current;
+          const savedDefault = loadUserSettings().defaultVoiceId;
+          if (savedDefault && list.some((v) => v.id === savedDefault)) {
+            return savedDefault;
+          }
+          return list[0].id;
+        });
+      }
+    });
+    const unsubGen = subscribeGeneratedAudios(setGeneratedAudios);
 
     return () => {
-      unsubUser();
+      unsubSettings();
       unsubVoices();
       unsubGen();
     };
-  }, [userId]);
+  }, []);
 
   const tabTitle =
     activeTab === 'home'
       ? 'Home'
       : activeTab === 'generate'
       ? 'Generate'
-      : 'Settings';
+      : 'Profile';
+
+  const displayInitial = (userSettings.displayName || 'V').charAt(0).toUpperCase();
 
   return (
     <div className="min-h-screen w-full max-w-full overflow-x-hidden bg-slate-50 dark:bg-slate-950 text-slate-900 dark:text-slate-100 flex flex-col">
@@ -186,23 +143,37 @@ function MobileStudioApp({
           </span>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            {isAdmin && (
-              <a
-                href="/admin"
-                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 min-h-[36px] rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-xs font-semibold text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors whitespace-nowrap"
-              >
-                <Shield className="w-3.5 h-3.5" />
-                <span>Admin</span>
-              </a>
-            )}
+            <a
+              href="/admin"
+              className="hidden sm:inline-flex items-center gap-1.5 px-2.5 py-1.5 min-h-[36px] rounded-xl bg-blue-50 dark:bg-blue-950/60 border border-blue-200 dark:border-blue-800 text-xs font-semibold text-blue-700 dark:text-blue-300 hover:bg-blue-100 dark:hover:bg-blue-900/60 transition-colors whitespace-nowrap"
+            >
+              <Sliders className="w-3.5 h-3.5" />
+              <span>Console</span>
+            </a>
 
             <button
               type="button"
               onClick={() => handleSetTheme(theme === 'dark' ? 'light' : 'dark')}
               aria-label={theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme'}
-              className="min-w-[44px] min-h-[44px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+              className="min-w-[40px] min-h-[40px] flex items-center justify-center rounded-xl text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
             >
               {theme === 'dark' ? <Sun className="w-4 h-4" /> : <Moon className="w-4 h-4" />}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setActiveTab('profile')}
+              aria-label="Open Profile"
+              title={userSettings.displayName || 'Profile'}
+              className={`min-w-[40px] min-h-[40px] flex items-center justify-center rounded-xl transition-colors ${
+                activeTab === 'profile'
+                  ? 'ring-2 ring-blue-600'
+                  : 'hover:bg-slate-100 dark:hover:bg-slate-800'
+              }`}
+            >
+              <span className="w-7 h-7 rounded-full bg-gradient-to-br from-[#2563EB] to-[#9333EA] text-white text-xs font-bold flex items-center justify-center">
+                {displayInitial}
+              </span>
             </button>
           </div>
         </div>
@@ -227,35 +198,39 @@ function MobileStudioApp({
             activeTrackId={activeTrack?.id || null}
             onPlayTrack={setActiveTrack}
             onGoGenerate={() => setActiveTab('generate')}
-            defaultFormat={userProfile?.defaultFormat || studioConfig.defaultFormat || 'wav'}
+            defaultFormat={userSettings.defaultFormat || studioConfig.defaultFormat || 'wav'}
           />
         )}
 
         {activeTab === 'generate' && (
           <TtsStudioView
             userId={userId}
-            userProfile={userProfile}
+            userSettings={userSettings}
             studioConfig={studioConfig}
-            isAdmin={isAdmin}
             voices={voices}
             selectedVoiceId={selectedVoiceId}
             onSelectVoiceId={setSelectedVoiceId}
-            onGoSettings={() => setActiveTab('settings')}
+            onGoSettings={() => {
+              setProfileSection('clone');
+              setActiveTab('profile');
+            }}
             onGeneratedSuccess={() => {
-              // Home library updates live via Firestore snapshot
+              // Home library updates live via store subscription
             }}
             onPlayTrack={setActiveTrack}
           />
         )}
 
-        {activeTab === 'settings' && (
-          <SettingsAndCloneView
+        {activeTab === 'profile' && (
+          <ProfileView
             userId={userId}
-            userProfile={userProfile}
+            userSettings={userSettings}
             studioConfig={studioConfig}
-            isAdmin={isAdmin}
             voices={voices}
+            generatedCount={generatedAudios.length}
             theme={theme}
+            activeSection={profileSection}
+            onChangeSection={setProfileSection}
             onSetTheme={handleSetTheme}
             onVoiceCreated={(voiceId) => {
               setSelectedVoiceId(voiceId);
@@ -265,7 +240,6 @@ function MobileStudioApp({
               setActiveTab('generate');
             }}
             onPlayTrack={setActiveTrack}
-            onSignOut={onSignOut}
           />
         )}
       </main>
@@ -279,12 +253,14 @@ function MobileStudioApp({
               userId={userId}
               onClose={() => setActiveTrack(null)}
               compact
+              playbackSpeed={userSettings.playbackSpeed || 1.0}
+              autoPlay={userSettings.autoPlayAfterGenerate ?? true}
             />
           </div>
         </div>
       )}
 
-      {/* Fixed 3-Tab Mobile Bottom Navigation Bar */}
+      {/* Fixed 3-Tab Mobile Bottom Navigation Bar: Home | Generate (+) | Profile */}
       <nav
         aria-label="Primary navigation"
         className="fixed bottom-0 left-0 right-0 z-40 h-16 bg-white/95 dark:bg-slate-900/95 backdrop-blur-md border-t border-slate-200 dark:border-slate-800"
@@ -320,190 +296,20 @@ function MobileStudioApp({
 
           <button
             type="button"
-            onClick={() => setActiveTab('settings')}
+            onClick={() => setActiveTab('profile')}
+            aria-label="Profile"
             className={`min-h-[44px] flex flex-col items-center justify-center gap-0.5 transition-colors ${
-              activeTab === 'settings'
+              activeTab === 'profile'
                 ? 'text-blue-600 dark:text-blue-400'
                 : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
             }`}
           >
-            <Settings className="w-5 h-5" />
-            <span className="text-[11px] font-medium tracking-tight">Settings</span>
+            <UserIcon className="w-5 h-5" />
+            <span className="text-[11px] font-medium tracking-tight">Profile</span>
           </button>
         </div>
       </nav>
     </div>
-  );
-}
-
-function AuthenticatedRouter({ isAdminRoute }: { isAdminRoute: boolean }) {
-  const [authLoading, setAuthLoading] = useState(true);
-  const [firebaseUser, setFirebaseUser] = useState<User | null>(null);
-  const [userProfile, setUserProfile] = useState<UserProfile | null>(null);
-  const [isAdmin, setIsAdmin] = useState(false);
-  const [authError, setAuthError] = useState<string | null>(null);
-  const [studioConfig, setStudioConfig] = useState<StudioConfig>(DEFAULT_STUDIO_CONFIG);
-
-  useEffect(() => {
-    let unsubConfig: (() => void) | null = null;
-    const unsubAuth = onAuthStateChanged(auth, async (user) => {
-      if (unsubConfig) {
-        unsubConfig();
-        unsubConfig = null;
-      }
-
-      if (!user) {
-        setFirebaseUser(null);
-        setUserProfile(null);
-        setIsAdmin(false);
-        setAuthError(null);
-        setAuthLoading(false);
-        return;
-      }
-
-      setAuthLoading(true);
-      setAuthError(null);
-      try {
-        const result = await ensureAuthenticatedUserProfile(user);
-        setFirebaseUser(user);
-        setUserProfile(result.profile);
-        setIsAdmin(result.isAdmin);
-        unsubConfig = subscribeStudioConfig(setStudioConfig);
-      } catch (err) {
-        setFirebaseUser(user);
-        setAuthError(
-          err instanceof Error ? err.message : 'Unable to initialize your account profile.'
-        );
-      } finally {
-        setAuthLoading(false);
-      }
-    });
-
-    return () => {
-      unsubAuth();
-      if (unsubConfig) unsubConfig();
-    };
-  }, []);
-
-  if (authLoading) {
-    return (
-      <div className="min-h-screen bg-[#080D1C] text-white flex items-center justify-center px-4">
-        <div className="flex items-center gap-3 text-sm text-[#A5B4CC]">
-          <Loader2 className="w-5 h-5 animate-spin text-[#2563EB]" />
-          <span>Loading VoiceCraft workspace...</span>
-        </div>
-      </div>
-    );
-  }
-
-  if (!firebaseUser) {
-    return <AuthGate targetLabel={isAdminRoute ? 'Admin Console' : 'VoiceCraft Studio'} />;
-  }
-
-  if (authError || !userProfile) {
-    return (
-      <div className="min-h-screen bg-[#080D1C] text-white flex items-center justify-center px-4">
-        <div className="w-full max-w-md bg-[#111A2E] border border-white/10 rounded-2xl p-6 space-y-4 text-center">
-          <AlertTriangle className="w-8 h-8 text-amber-400 mx-auto" />
-          <h1 className="font-display text-lg font-bold">Account Initialization Error</h1>
-          <p className="text-xs text-[#A5B4CC] leading-relaxed">
-            {authError || 'Could not load your profile. Please sign in again.'}
-          </p>
-          <div className="flex items-center justify-center gap-3 pt-2">
-            <button
-              type="button"
-              onClick={() => void signOutUser()}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl bg-white/10 hover:bg-white/15"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              Sign Out
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (userProfile.status === 'suspended') {
-    return (
-      <div className="min-h-screen bg-[#080D1C] text-white flex items-center justify-center px-4">
-        <div className="w-full max-w-md bg-[#111A2E] border border-red-500/30 rounded-2xl p-6 space-y-4 text-center">
-          <AlertTriangle className="w-8 h-8 text-red-400 mx-auto" />
-          <h1 className="font-display text-lg font-bold">Account Suspended</h1>
-          <p className="text-sm text-[#A5B4CC] leading-relaxed">
-            Access for <strong className="text-white">{userProfile.email}</strong> has been
-            suspended by the workspace administrator.
-          </p>
-          <div className="flex items-center justify-center gap-3 pt-2">
-            <a
-              href="/"
-              className="px-4 py-2 text-xs font-semibold rounded-xl border border-white/10 text-[#A5B4CC] hover:text-white"
-            >
-              Back to Home
-            </a>
-            <button
-              type="button"
-              onClick={() => void signOutUser()}
-              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl bg-red-600 text-white hover:bg-red-700"
-            >
-              <LogOut className="w-3.5 h-3.5" />
-              Sign Out
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (isAdminRoute) {
-    if (!isAdmin) {
-      return (
-        <div className="min-h-screen bg-[#080D1C] text-white flex items-center justify-center px-4">
-          <div className="w-full max-w-md bg-[#111A2E] border border-white/10 rounded-2xl p-6 space-y-4 text-center">
-            <Shield className="w-8 h-8 text-purple-400 mx-auto" />
-            <h1 className="font-display text-lg font-bold">Administrator Access Required</h1>
-            <p className="text-sm text-[#A5B4CC] leading-relaxed">
-              You are currently signed in as <strong className="text-white">{userProfile.email}</strong>,
-              which is a standard member account.
-            </p>
-            <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
-              <a
-                href="/app"
-                className="px-4 py-2 text-xs font-semibold rounded-xl bg-gradient-to-r from-[#2563EB] to-[#9333EA] text-white"
-              >
-                Open Studio
-              </a>
-              <button
-                type="button"
-                onClick={() => void signOutUser()}
-                className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold rounded-xl border border-white/10 text-[#A5B4CC] hover:text-white"
-              >
-                <LogOut className="w-3.5 h-3.5" />
-                Switch Google Account
-              </button>
-            </div>
-          </div>
-        </div>
-      );
-    }
-
-    return (
-      <AdminPanelView
-        currentUser={userProfile}
-        studioConfig={studioConfig}
-        onSignOut={signOutUser}
-      />
-    );
-  }
-
-  return (
-    <MobileStudioApp
-      firebaseUser={firebaseUser}
-      initialProfile={userProfile}
-      isAdmin={isAdmin}
-      studioConfig={studioConfig}
-      onSignOut={signOutUser}
-    />
   );
 }
 
@@ -516,11 +322,19 @@ export default function App() {
   const isStudioApp = pathname === '/app' || pathname.startsWith('/app/');
   const isAdminRoute = pathname === '/admin' || pathname.startsWith('/admin/');
   const isPrivacy = pathname === '/privacy' || pathname === '/privacy-policy';
-  const isTerms = pathname === '/terms' || pathname === '/terms-of-service';
+  const isTerms = pathname === '/terms' || pathname.startsWith('/terms-of-service');
+
+  const [studioConfig, setStudioConfig] = useState<StudioConfig>(() =>
+    typeof window !== 'undefined' ? loadStudioConfig() : DEFAULT_STUDIO_CONFIG
+  );
+
+  useEffect(() => {
+    return subscribeStudioConfig(setStudioConfig);
+  }, []);
 
   useEffect(() => {
     if (isAdminRoute) {
-      document.title = 'Admin Console — VoiceCraft';
+      document.title = 'Studio Console — VoiceCraft';
     } else if (isStudioApp) {
       document.title = 'VoiceCraft Studio — AI Voice Generator App';
     } else if (isPrivacy) {
@@ -534,8 +348,10 @@ export default function App() {
 
   return (
     <ErrorBoundary>
-      {isAdminRoute || isStudioApp ? (
-        <AuthenticatedRouter isAdminRoute={isAdminRoute} />
+      {isAdminRoute ? (
+        <AdminPanelView studioConfig={studioConfig} />
+      ) : isStudioApp ? (
+        <MobileStudioApp studioConfig={studioConfig} />
       ) : isPrivacy ? (
         <LegalPage type="privacy" />
       ) : isTerms ? (

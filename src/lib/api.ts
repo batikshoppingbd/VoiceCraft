@@ -4,7 +4,7 @@ import {
   resolveCachedAudio,
   saveAudioBlobToCache,
 } from './audioCache';
-import { getAuthIdToken, getWorkspaceId } from './firebase';
+import { getWorkspaceId } from './studioStore';
 import type {
   AudioFormat,
   BaseVoiceName,
@@ -54,9 +54,7 @@ export interface AdminEngineStatus {
 }
 
 async function getAuthHeaders(extra?: Record<string, string>): Promise<Record<string, string>> {
-  const idToken = await getAuthIdToken();
   return {
-    Authorization: `Bearer ${idToken}`,
     'X-Studio-Client-Id': getWorkspaceId(),
     ...extra,
   };

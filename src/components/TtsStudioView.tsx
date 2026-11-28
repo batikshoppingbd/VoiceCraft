@@ -3,26 +3,30 @@ import {
   Download,
   Loader2,
   Mic,
-  Settings,
+  Sparkles,
+  User,
   Volume2,
 } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { apiGenerateTts, triggerAuthorizedDownload } from '../lib/api';
-import { createGeneratedAudioDoc, recordAudioDownload } from '../lib/firebase';
+import {
+  createGeneratedAudioDoc,
+  createPresetVoiceProfileDoc,
+  recordAudioDownload,
+} from '../lib/studioStore';
 import type {
   ActiveAudioTrack,
   AudioFormat,
   StudioConfig,
   SupportedLanguage,
-  UserProfile,
+  UserSettings,
   VoiceProfile,
 } from '../types/studio';
 
 interface TtsStudioViewProps {
   userId: string;
-  userProfile: UserProfile | null;
+  userSettings: UserSettings;
   studioConfig: StudioConfig;
-  isAdmin: boolean;
   voices: VoiceProfile[];
   selectedVoiceId: string | null;
   onSelectVoiceId: (id: string) => void;
@@ -67,9 +71,8 @@ const SAMPLE_SCRIPTS: Record<SupportedLanguage, { label: string; title: string; 
 
 export function TtsStudioView({
   userId,
-  userProfile,
+  userSettings,
   studioConfig,
-  isAdmin,
   voices,
   selectedVoiceId,
   onSelectVoiceId,
@@ -80,19 +83,22 @@ export function TtsStudioView({
   const activeVoice =
     voices.find((v) => v.id === selectedVoiceId) || voices[0] || null;
   const maxTextLength = studioConfig.maxTextLength || 5000;
-  const generatorPaused = !studioConfig.ttsEnabled && !isAdmin;
+  const generatorPaused = !studioConfig.ttsEnabled;
 
   const [title, setTitle] = useState('');
   const [text, setText] = useState('');
   const [language, setLanguage] = useState<SupportedLanguage>(
-    userProfile?.defaultLanguage || 'en'
+    userSettings.defaultLanguage || studioConfig.defaultLanguage || 'en'
   );
-  const [speed, setSpeed] = useState<number>(userProfile?.defaultSpeed || 1.0);
-  const [pitch, setPitch] = useState<number>(userProfile?.defaultPitch || 0);
-  const [format, setFormat] = useState<AudioFormat>(userProfile?.defaultFormat || 'wav');
+  const [speed, setSpeed] = useState<number>(userSettings.defaultSpeed || 1.0);
+  const [pitch, setPitch] = useState<number>(userSettings.defaultPitch ?? 0);
+  const [format, setFormat] = useState<AudioFormat>(
+    userSettings.defaultFormat || studioConfig.defaultFormat || 'wav'
+  );
   const [styleOverride, setStyleOverride] = useState('');
 
   const [generating, setGenerating] = useState(false);
+  const [creatingPreset, setCreatingPreset] = useState(false);
   const [progressStage, setProgressStage] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [lastGenerated, setLastGenerated] = useState<{
@@ -112,13 +118,13 @@ export function TtsStudioView({
       setSpeed(activeVoice.defaultSpeed);
       setPitch(activeVoice.defaultPitch);
       setLanguage(activeVoice.language);
-    } else if (userProfile) {
-      setSpeed(userProfile.defaultSpeed);
-      setPitch(userProfile.defaultPitch);
-      setLanguage(userProfile.defaultLanguage);
-      setFormat(userProfile.defaultFormat);
+    } else {
+      setSpeed(userSettings.defaultSpeed);
+      setPitch(userSettings.defaultPitch);
+      setLanguage(userSettings.defaultLanguage);
+      setFormat(userSettings.defaultFormat);
     }
-  }, [activeVoice?.id, userProfile?.defaultFormat]);
+  }, [activeVoice?.id, userSettings.defaultFormat]);
 
   const handleGenerate = async () => {
     setError(null);
@@ -127,7 +133,7 @@ export function TtsStudioView({
       return;
     }
     if (!activeVoice) {
-      setError('Please clone a voice in Settings first.');
+      setError('Please create a voice profile under Profile → My Voice Clone first.');
       return;
     }
     const trimmedText = text.trim();
@@ -244,6 +250,19 @@ export function TtsStudioView({
     }
   };
 
+  const handleUsePresetVoice = async () => {
+    setCreatingPreset(true);
+    setError(null);
+    try {
+      const id = await createPresetVoiceProfileDoc(userSettings.defaultLanguage || 'en');
+      onSelectVoiceId(id);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unable to add preset voice.');
+    } finally {
+      setCreatingPreset(false);
+    }
+  };
+
   if (voices.length === 0) {
     return (
       <div className="max-w-xl mx-auto bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-8 text-center space-y-4">
@@ -251,20 +270,34 @@ export function TtsStudioView({
           <Mic className="w-6 h-6" />
         </div>
         <h2 className="font-display text-lg font-bold text-slate-900 dark:text-slate-100">
-          Clone a voice in Settings first
+          Choose or clone a voice to start
         </h2>
         <p className="text-sm text-slate-600 dark:text-slate-400">
-          Go to the Settings tab to record or upload a voice sample and create your personal cloned
-          voice profile.
+          Clone your personal voice under Profile → My Voice Clone, or load a ready-to-use AI Studio voice right away.
         </p>
-        <button
-          type="button"
-          onClick={onGoSettings}
-          className="inline-flex items-center gap-2 px-5 py-3 text-sm font-semibold rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors min-h-[44px]"
-        >
-          <Settings className="w-4 h-4" />
-          Open Settings & Clone Voice
-        </button>
+        <div className="flex flex-wrap items-center justify-center gap-3 pt-1">
+          <button
+            type="button"
+            onClick={onGoSettings}
+            className="inline-flex items-center gap-2 px-5 py-3 text-sm font-semibold rounded-xl bg-blue-600 text-white hover:bg-blue-700 transition-colors min-h-[44px]"
+          >
+            <User className="w-4 h-4" />
+            Open Profile & My Voice Clone
+          </button>
+          <button
+            type="button"
+            onClick={() => void handleUsePresetVoice()}
+            disabled={creatingPreset}
+            className="inline-flex items-center gap-2 px-5 py-3 text-sm font-semibold rounded-xl border border-slate-200 dark:border-slate-700 text-slate-800 dark:text-slate-100 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors min-h-[44px]"
+          >
+            {creatingPreset ? (
+              <Loader2 className="w-4 h-4 animate-spin" />
+            ) : (
+              <Sparkles className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+            )}
+            Use Preset AI Voice
+          </button>
+        </div>
       </div>
     );
   }
@@ -276,15 +309,13 @@ export function TtsStudioView({
           Generate Speech
         </h1>
         <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-0.5">
-          Pick a cloned voice, write Bangla or English text, and generate natural speech.
+          Pick a voice, write Bangla or English text, and generate natural speech.
         </p>
       </div>
 
       {!studioConfig.ttsEnabled && (
         <div className="p-3.5 rounded-xl border border-amber-200 dark:border-amber-900/60 bg-amber-50 dark:bg-amber-950/40 text-xs text-amber-800 dark:text-amber-200">
-          {isAdmin
-            ? 'Voice Generator is currently paused for standard members (Admin access remains active).'
-            : 'Voice generation is temporarily paused by the workspace administrator.'}
+          Voice generation is temporarily paused in Studio Controls (/admin).
         </div>
       )}
 

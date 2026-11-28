@@ -13,7 +13,7 @@ import {
   HttpError,
   resolveSafeUserFile,
   SAFE_ID_REGEX,
-  verifyAuthenticatedUser,
+  validateWorkspaceClientId,
 } from './server/studioHandlers.js';
 
 const PORT = Number(process.env.PORT || 3000);
@@ -37,7 +37,7 @@ function findExistingUserAudioFile(
   }
   const userCategoryDir = path.resolve(STORAGE_ROOT, uid, category);
   if (!fs.existsSync(userCategoryDir)) return null;
-  const exts = ['wav', 'mp3', 'm4a', 'webm', 'ogg'];
+  const exts = ['wav', 'mp3', 'm4a', 'webm', 'ogg', 'aac', 'flac', 'opus'];
   for (const ext of exts) {
     const candidate = path.resolve(userCategoryDir, `${audioId}.${ext}`);
     if (candidate.startsWith(userCategoryDir + path.sep) && fs.existsSync(candidate)) {
@@ -47,18 +47,18 @@ function findExistingUserAudioFile(
   return null;
 }
 
-async function requireAuthenticatedUser(
+function requireAuthenticatedUser(
   req: WorkspaceRequest,
   res: Response,
   next: NextFunction
-): Promise<void> {
+): void {
   try {
-    const authUser = await verifyAuthenticatedUser(req.headers);
-    req.uid = authUser.uid;
+    req.uid = validateWorkspaceClientId(req.headers['x-studio-client-id']);
     next();
   } catch (err) {
-    const status = err instanceof HttpError ? err.status : 401;
-    const message = err instanceof Error ? err.message : 'Sign in with Google is required.';
+    const status = err instanceof HttpError ? err.status : 400;
+    const message =
+      err instanceof Error ? err.message : 'Valid workspace identifier is required.';
     res.status(status).json({ error: message });
   }
 }
@@ -69,7 +69,7 @@ const upload = multer({
     fileSize: 4 * 1024 * 1024 + 256 * 1024, // ~4.25 MB safe for serverless & local
   },
   fileFilter: (_req, file, cb) => {
-    const allowedExts = ['.mp3', '.wav', '.m4a', '.webm', '.ogg'];
+    const allowedExts = ['.mp3', '.wav', '.m4a', '.aac', '.webm', '.ogg', '.opus', '.flac'];
     const ext = path.extname(file.originalname || '').toLowerCase();
     const isAudioMime =
       file.mimetype.startsWith('audio/') ||
@@ -78,7 +78,7 @@ const upload = multer({
     if (isAudioMime || allowedExts.includes(ext)) {
       cb(null, true);
     } else {
-      cb(new Error('Unsupported audio format. Please upload MP3, WAV, M4A, or WebM audio.'));
+      cb(new Error('Unsupported audio format. Please upload MP3, WAV, M4A, AAC, OGG, or WebM audio.'));
     }
   },
 });
@@ -109,8 +109,10 @@ async function startServer() {
         });
         res.json(result);
       } catch (err) {
-        console.error('Voice analysis error:', err);
         const status = err instanceof HttpError ? err.status : 500;
+        if (status >= 500) {
+          console.error('Voice analysis error:', err);
+        }
         const message =
           err instanceof Error ? err.message : 'Failed to analyze voice sample.';
         res.status(status).json({ error: message });
@@ -219,7 +221,7 @@ async function startServer() {
 
         const found = findExistingUserAudioFile(uid, category, audioId);
         if (!found) {
-          res.status(404).json({ error: 'Audio file not found in your account.' });
+          res.status(404).json({ error: 'Audio file not found in this workspace.' });
           return;
         }
 
@@ -229,6 +231,9 @@ async function startServer() {
           m4a: 'audio/mp4',
           webm: 'audio/webm',
           ogg: 'audio/ogg',
+          aac: 'audio/aac',
+          flac: 'audio/flac',
+          opus: 'audio/ogg',
         };
         if (isDownload) {
           res.setHeader(
@@ -258,7 +263,7 @@ async function startServer() {
           res.status(400).json({ error: 'Invalid audio parameters.' });
           return;
         }
-        const exts = ['wav', 'mp3', 'm4a', 'webm', 'ogg'];
+        const exts = ['wav', 'mp3', 'm4a', 'webm', 'ogg', 'aac', 'flac', 'opus'];
         for (const ext of exts) {
           const p = resolveSafeUserFile(uid, category, `${audioId}.${ext}`);
           if (fs.existsSync(p)) {

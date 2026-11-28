@@ -1,6 +1,6 @@
 import {
   getAdminEngineStatus,
-  verifyAuthenticatedUser,
+  validateWorkspaceClientId,
 } from '../../server/studioHandlers.js';
 import { type ApiRequest, type ApiResponse, sendApiError } from '../_utils.js';
 
@@ -11,7 +11,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   try {
-    await verifyAuthenticatedUser(req.headers);
+    validateWorkspaceClientId(req.headers['x-studio-client-id']);
     res.status(200).json(getAdminEngineStatus());
   } catch (err) {
     sendApiError(res, err, 'Failed to read engine status.');

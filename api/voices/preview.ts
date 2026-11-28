@@ -1,6 +1,6 @@
 import {
   handlePreviewVoiceRequest,
-  verifyAuthenticatedUser,
+  validateWorkspaceClientId,
 } from '../../server/studioHandlers.js';
 import { type ApiRequest, type ApiResponse, sendApiError } from '../_utils.js';
 
@@ -11,12 +11,12 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   try {
-    const authUser = await verifyAuthenticatedUser(req.headers);
+    const uid = validateWorkspaceClientId(req.headers['x-studio-client-id']);
     const body =
       req.body && typeof req.body === 'object'
         ? (req.body as Record<string, unknown>)
         : {};
-    const result = await handlePreviewVoiceRequest({ uid: authUser.uid, body });
+    const result = await handlePreviewVoiceRequest({ uid, body });
     res.status(200).json(result);
   } catch (err) {
     sendApiError(res, err, 'Failed to generate voice preview.');

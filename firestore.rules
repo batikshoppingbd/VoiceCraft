@@ -93,6 +93,74 @@ service cloud.firestore {
         && data.updatedAt is timestamp;
     }
 
+    // Validation Blueprint: UserSettings
+    function isValidUserSettings(data) {
+      let allowed = [
+        'uid', 'defaultVoiceId', 'defaultLanguage', 'defaultSpeed',
+        'defaultPitch', 'defaultFormat', 'autoPlayAfterGenerate',
+        'playbackSpeed', 'themePreference', 'updatedAt'
+      ];
+      let required = [
+        'uid', 'defaultLanguage', 'defaultSpeed', 'defaultPitch',
+        'defaultFormat', 'autoPlayAfterGenerate', 'playbackSpeed',
+        'themePreference', 'updatedAt'
+      ];
+      return data.keys().hasAll(required)
+        && data.keys().hasOnly(allowed)
+        && isValidId(data.uid)
+        && (!('defaultVoiceId' in data) || isValidId(data.defaultVoiceId))
+        && isValidLanguage(data.defaultLanguage)
+        && isValidSpeed(data.defaultSpeed)
+        && isValidPitch(data.defaultPitch)
+        && isValidFormat(data.defaultFormat)
+        && data.autoPlayAfterGenerate is bool
+        && isValidSpeed(data.playbackSpeed)
+        && data.themePreference is string && data.themePreference in ['light', 'dark']
+        && data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: AccountInfo
+    function isValidAccountInfo(data) {
+      let allowed = [
+        'uid', 'displayName', 'email', 'photoURL', 'emailVerified',
+        'providerId', 'accountCreatedAt', 'lastSignInAt', 'updatedAt'
+      ];
+      let required = [
+        'uid', 'displayName', 'email', 'emailVerified',
+        'providerId', 'accountCreatedAt', 'lastSignInAt', 'updatedAt'
+      ];
+      return data.keys().hasAll(required)
+        && data.keys().hasOnly(allowed)
+        && isValidId(data.uid)
+        && data.displayName is string && data.displayName.size() >= 1 && data.displayName.size() <= 120
+        && data.email is string && data.email.size() >= 3 && data.email.size() <= 256
+        && (!('photoURL' in data) || (data.photoURL is string && data.photoURL.size() <= 512))
+        && data.emailVerified is bool
+        && data.providerId is string && data.providerId.size() >= 1 && data.providerId.size() <= 64
+        && data.accountCreatedAt is string && data.accountCreatedAt.size() >= 1 && data.accountCreatedAt.size() <= 64
+        && data.lastSignInAt is string && data.lastSignInAt.size() >= 1 && data.lastSignInAt.size() <= 64
+        && data.updatedAt is timestamp;
+    }
+
+    // Validation Blueprint: VoiceSample
+    function isValidVoiceSample(data) {
+      let allowed = [
+        'id', 'userId', 'voiceId', 'sampleAudioId', 'storagePath',
+        'sourceType', 'mimeType', 'durationSec', 'createdAt'
+      ];
+      return data.keys().hasAll(allowed)
+        && data.keys().hasOnly(allowed)
+        && isValidId(data.id)
+        && isValidId(data.userId)
+        && isValidId(data.voiceId)
+        && isValidId(data.sampleAudioId)
+        && data.storagePath is string && data.storagePath.size() >= 1 && data.storagePath.size() <= 256
+        && data.sourceType is string && data.sourceType in ['microphone', 'upload']
+        && data.mimeType is string && data.mimeType.size() >= 3 && data.mimeType.size() <= 64
+        && (data.durationSec is int || data.durationSec is float) && data.durationSec > 0 && data.durationSec <= 600
+        && data.createdAt is timestamp;
+    }
+
     // Validation Blueprint: AdminEntry
     function isValidAdminEntry(data) {
       let required = ['uid', 'email', 'grantedBy', 'createdAt'];
@@ -139,7 +207,7 @@ service cloud.firestore {
     // Validation Blueprint: VoiceProfile
     function isValidVoiceProfile(data) {
       let allowed = [
-        'id', 'userId', 'name', 'language', 'sourceType',
+        'id', 'userId', 'name', 'status', 'language', 'sourceType',
         'sampleAudioId', 'sampleMimeType', 'sampleDurationSec', 'sampleTranscript',
         'baseVoiceName', 'voiceStylePrompt', 'acousticSummary',
         'pitchRegister', 'speakingTempo', 'timbreProfile',
@@ -160,6 +228,7 @@ service cloud.firestore {
         && isValidId(data.id)
         && isValidId(data.userId)
         && data.name is string && data.name.size() >= 1 && data.name.size() <= 80
+        && (!('status' in data) || (data.status is string && data.status in ['not_created', 'sample_added', 'processing', 'ready', 'failed']))
         && isValidLanguage(data.language)
         && data.sourceType is string && data.sourceType in ['microphone', 'upload']
         && isValidId(data.sampleAudioId)
@@ -291,6 +360,73 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // Collection: settings
+    match /settings/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isActiveUser()
+        && isValidUserSettings(incoming())
+        && incoming().uid == userId
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isActiveUser()
+        && isValidUserSettings(incoming())
+        && incoming().uid == existing().uid
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'defaultVoiceId', 'defaultLanguage', 'defaultSpeed',
+          'defaultPitch', 'defaultFormat', 'autoPlayAfterGenerate',
+          'playbackSpeed', 'themePreference', 'updatedAt'
+        ]);
+      allow delete: if false;
+    }
+
+    // Collection: accountInfo
+    match /accountInfo/{userId} {
+      allow get: if isValidId(userId) && (isOwner(userId) || isAdmin());
+      allow list: if isAdmin();
+      allow create: if isValidId(userId)
+        && isOwner(userId)
+        && isValidAccountInfo(incoming())
+        && incoming().uid == userId
+        && incoming().email == request.auth.token.email
+        && incoming().emailVerified == request.auth.token.email_verified
+        && incoming().updatedAt == request.time;
+      allow update: if isValidId(userId)
+        && isOwner(userId)
+        && isValidAccountInfo(incoming())
+        && incoming().uid == existing().uid
+        && incoming().email == request.auth.token.email
+        && incoming().emailVerified == request.auth.token.email_verified
+        && incoming().accountCreatedAt == existing().accountCreatedAt
+        && incoming().updatedAt == request.time
+        && incoming().diff(existing()).affectedKeys().hasOnly([
+          'displayName', 'photoURL', 'emailVerified',
+          'providerId', 'lastSignInAt', 'updatedAt'
+        ]);
+      allow delete: if false;
+    }
+
+    // Collection: voiceSamples
+    match /voiceSamples/{sampleId} {
+      allow get: if isValidId(sampleId) && (isOwner(existing().userId) || isAdmin());
+      allow list: if (isVerifiedUser() && resource.data.userId == request.auth.uid) || isAdmin();
+      allow create: if isValidId(sampleId)
+        && isVerifiedUser()
+        && isActiveUser()
+        && isValidVoiceSample(incoming())
+        && incoming().id == sampleId
+        && incoming().userId == request.auth.uid
+        && incoming().createdAt == request.time
+        && exists(/databases/$(database)/documents/voiceProfiles/$(incoming().voiceId))
+        && get(/databases/$(database)/documents/voiceProfiles/$(incoming().voiceId)).data.userId == incoming().userId;
+      allow update: if false;
+      allow delete: if isValidId(sampleId) && (isOwner(existing().userId) || isAdmin());
+    }
+
     // Collection: admins
     match /admins/{adminUid} {
       allow get: if isValidId(adminUid) && (isOwner(adminUid) || isAdmin());
@@ -374,7 +510,7 @@ service cloud.firestore {
         && incoming().createdAt == existing().createdAt
         && incoming().updatedAt == request.time
         && (
-          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'language', 'defaultSpeed', 'defaultPitch', 'voiceStylePrompt', 'updatedAt'])
+          incoming().diff(existing()).affectedKeys().hasOnly(['name', 'status', 'language', 'defaultSpeed', 'defaultPitch', 'voiceStylePrompt', 'updatedAt'])
           || incoming().diff(existing()).affectedKeys().hasOnly(['previewAudioId', 'updatedAt'])
         );
       allow delete: if isValidId(voiceId) && (isOwner(existing().userId) || isAdmin());

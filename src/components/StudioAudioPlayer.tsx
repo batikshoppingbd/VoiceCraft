@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import { useEffect, useRef, useState } from 'react';
 import { fetchAuthorizedAudioBlob, triggerAuthorizedDownload } from '../lib/api';
-import { recordAudioDownload } from '../lib/firebase';
+import { recordAudioDownload } from '../lib/studioStore';
 import type { ActiveAudioTrack, AudioFormat } from '../types/studio';
 
 interface StudioAudioPlayerProps {
@@ -19,6 +19,8 @@ interface StudioAudioPlayerProps {
   userId: string;
   onClose?: () => void;
   compact?: boolean;
+  playbackSpeed?: number;
+  autoPlay?: boolean;
 }
 
 function formatTimecode(seconds: number): string {
@@ -33,6 +35,8 @@ export function StudioAudioPlayer({
   userId,
   onClose,
   compact = false,
+  playbackSpeed = 1.0,
+  autoPlay = true,
 }: StudioAudioPlayerProps) {
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const objectUrlRef = useRef<string | null>(null);
@@ -68,13 +72,16 @@ export function StudioAudioPlayer({
         objectUrlRef.current = url;
         if (audioRef.current) {
           audioRef.current.src = url;
+          audioRef.current.playbackRate = playbackSpeed;
           audioRef.current.load();
-          try {
-            await audioRef.current.play();
-            setIsPlaying(true);
-          } catch {
-            // Autoplay might wait for direct click on some browsers
-            setIsPlaying(false);
+          if (autoPlay) {
+            try {
+              await audioRef.current.play();
+              setIsPlaying(true);
+            } catch {
+              // Autoplay might wait for direct click on some browsers
+              setIsPlaying(false);
+            }
           }
         }
       } catch (err) {
@@ -99,6 +106,12 @@ export function StudioAudioPlayer({
       }
     };
   }, [track?.id, track?.serverAudioId, track?.category, reloadNonce]);
+
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.playbackRate = playbackSpeed;
+    }
+  }, [playbackSpeed]);
 
   if (!track) return null;
 

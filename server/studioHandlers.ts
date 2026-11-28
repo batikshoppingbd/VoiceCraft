@@ -1,17 +1,13 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import { createRequire } from 'node:module';
 import path from 'node:path';
-import { getApp, getApps, initializeApp } from 'firebase-admin/app';
-import { getAuth } from 'firebase-admin/auth';
 import {
   analyzeVoiceSample,
   BaseVoiceName,
   SupportedLanguage,
   synthesizeClonedSpeech,
+  VoiceInputValidationError,
 } from './geminiVoiceEngine.js';
-
-const require = createRequire(import.meta.url);
 
 export const SAFE_ID_REGEX = /^[a-zA-Z0-9_\-]+$/;
 export const SAFE_FILENAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
@@ -19,59 +15,11 @@ export const SAFE_FILENAME_REGEX = /^[a-zA-Z0-9_.\-]+$/;
 const ENABLE_LOCAL_DISK_STORAGE = process.env.VERCEL !== '1';
 const STORAGE_ROOT = path.resolve(process.cwd(), 'storage');
 
-let cachedProjectId: string | null = null;
-function getFirebaseProjectId(): string {
-  if (cachedProjectId) return cachedProjectId;
-  let raw: { projectId?: string } = {};
-  try {
-    raw = require('../firebase-applet-config.json') as { projectId?: string };
-  } catch {
-    const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
-    raw = JSON.parse(fs.readFileSync(configPath, 'utf8')) as { projectId?: string };
-  }
-  const projectId = raw.projectId || process.env.FIREBASE_PROJECT_ID || '';
-  if (!projectId || projectId === 'remixed-project-id') {
-    throw new Error('Firebase projectId is not configured.');
-  }
-  cachedProjectId = projectId;
-  return cachedProjectId;
-}
-
-function getFirebaseAdminAuth() {
-  const adminApp = getApps().length
-    ? getApp()
-    : initializeApp({ projectId: getFirebaseProjectId() });
-  return getAuth(adminApp);
-}
-
 export class HttpError extends Error {
   status: number;
   constructor(status: number, message: string) {
     super(message);
     this.status = status;
-  }
-}
-
-export async function verifyAuthenticatedUser(headers: {
-  authorization?: unknown;
-}): Promise<{ uid: string; email: string }> {
-  const rawAuth = typeof headers.authorization === 'string' ? headers.authorization : '';
-  const match = rawAuth.match(/^Bearer\s+(.+)$/i);
-  if (!match || !match[1]) {
-    throw new HttpError(401, 'Sign in with Google is required.');
-  }
-  try {
-    const decoded = await getFirebaseAdminAuth().verifyIdToken(match[1].trim());
-    if (!decoded.uid || !SAFE_ID_REGEX.test(decoded.uid)) {
-      throw new HttpError(401, 'Invalid user token.');
-    }
-    return {
-      uid: decoded.uid,
-      email: typeof decoded.email === 'string' ? decoded.email : '',
-    };
-  } catch (err) {
-    if (err instanceof HttpError) throw err;
-    throw new HttpError(401, 'Authentication session expired. Please sign in again.');
   }
 }
 
@@ -150,11 +98,14 @@ function tryDeleteLocalFile(
 
 export function inferExtension(mimeType: string, originalName: string): string {
   const ext = path.extname(originalName || '').toLowerCase().replace('.', '');
-  if (['mp3', 'wav', 'm4a', 'webm', 'ogg'].includes(ext)) return ext;
+  if (['mp3', 'wav', 'm4a', 'webm', 'ogg', 'aac', 'flac', 'opus'].includes(ext)) return ext;
   if (mimeType.includes('wav')) return 'wav';
   if (mimeType.includes('mpeg') || mimeType.includes('mp3')) return 'mp3';
   if (mimeType.includes('mp4') || mimeType.includes('m4a')) return 'm4a';
+  if (mimeType.includes('aac')) return 'aac';
+  if (mimeType.includes('flac')) return 'flac';
   if (mimeType.includes('webm')) return 'webm';
+  if (mimeType.includes('ogg') || mimeType.includes('opus')) return 'ogg';
   return 'wav';
 }
 
@@ -214,6 +165,9 @@ export async function handleAnalyzeVoiceRequest(params: {
     });
   } catch (err) {
     tryDeleteLocalFile(uid, 'samples', `${sampleAudioId}.${ext}`);
+    if (err instanceof VoiceInputValidationError) {
+      throw new HttpError(err.status, err.message);
+    }
     throw err;
   }
 

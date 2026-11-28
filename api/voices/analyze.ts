@@ -1,6 +1,6 @@
 import {
   handleAnalyzeVoiceRequest,
-  verifyAuthenticatedUser,
+  validateWorkspaceClientId,
 } from '../../server/studioHandlers.js';
 import {
   type ApiRequest,
@@ -22,14 +22,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse) {
   }
 
   try {
-    const authUser = await verifyAuthenticatedUser(req.headers);
+    const uid = validateWorkspaceClientId(req.headers['x-studio-client-id']);
     await runMultipartAudioUpload(req, res);
     const body =
       req.body && typeof req.body === 'object'
         ? (req.body as Record<string, unknown>)
         : {};
     const result = await handleAnalyzeVoiceRequest({
-      uid: authUser.uid,
+      uid,
       file: req.file,
       body,
     });
